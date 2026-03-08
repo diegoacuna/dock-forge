@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@dockforge/db": ["packages/db/src/index.ts"],
+      "@dockforge/shared/*": ["packages/shared/src/*"],
+      "@dockforge/shared": ["packages/shared/src/index.ts"],
+      "@dockforge/docker-runtime": ["packages/docker-runtime/src/index.ts"],
+      "@dockforge/orchestrator": ["packages/orchestrator/src/index.ts"]
+    }
+  }
+}
+

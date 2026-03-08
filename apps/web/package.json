@@ -1,0 +1,33 @@
+{
+  "name": "@dockforge/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@dockforge/shared": "workspace:*",
+    "@tanstack/react-query": "^5.66.0",
+    "@tanstack/react-query-devtools": "^5.66.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.503.0",
+    "next": "^15.2.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "reactflow": "^11.11.4",
+    "tailwind-merge": "^3.3.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.12",
+    "@types/react-dom": "^19.0.4",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17"
+  }
+}

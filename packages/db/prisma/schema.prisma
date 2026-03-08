@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Group {
+  id            String             @id @default(cuid())
+  name          String
+  slug          String             @unique
+  description   String?
+  color         String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  containers    GroupContainer[]
+  edges         DependencyEdge[]
+  runs          GroupRun[]
+  graphLayouts  GroupGraphLayout[]
+}
+
+model GroupContainer {
+  id                  String             @id @default(cuid())
+  groupId             String
+  containerKey        String
+  containerNameSnapshot String
+  lastResolvedDockerId String?
+  aliasName           String?
+  notes               String?
+  includeInStartAll   Boolean            @default(true)
+  includeInStopAll    Boolean            @default(true)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  group               Group              @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  outgoingEdges       DependencyEdge[]   @relation("DependencyEdgeFrom")
+  incomingEdges       DependencyEdge[]   @relation("DependencyEdgeTo")
+  graphLayouts        GroupGraphLayout[]
+  runSteps            GroupRunStep[]
+
+  @@unique([groupId, containerKey])
+}
+
+model DependencyEdge {
+  id                   String         @id @default(cuid())
+  groupId              String
+  fromGroupContainerId String
+  toGroupContainerId   String
+  waitStrategy         String?
+  timeoutSeconds       Int?
+  metadataJson         String?
+  createdAt            DateTime       @default(now())
+  group                Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  from                 GroupContainer @relation("DependencyEdgeFrom", fields: [fromGroupContainerId], references: [id], onDelete: Cascade)
+  to                   GroupContainer @relation("DependencyEdgeTo", fields: [toGroupContainerId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, fromGroupContainerId, toGroupContainerId])
+}
+
+model GroupRun {
+  id           String           @id @default(cuid())
+  groupId      String
+  action       String
+  status       String
+  startedAt    DateTime
+  completedAt  DateTime?
+  summaryJson  String?
+  createdAt    DateTime         @default(now())
+  group        Group            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  steps        GroupRunStep[]
+}
+
+model GroupRunStep {
+  id                    String             @id @default(cuid())
+  groupRunId            String
+  groupContainerId      String?
+  containerKey          String?
+  containerNameSnapshot String?
+  action                String
+  status                String
+  message               String?
+  startedAt             DateTime
+  completedAt           DateTime?
+  metadataJson          String?
+  createdAt             DateTime           @default(now())
+  groupRun              GroupRun           @relation(fields: [groupRunId], references: [id], onDelete: Cascade)
+  groupContainer        GroupContainer?    @relation(fields: [groupContainerId], references: [id], onDelete: SetNull)
+}
+
+model GroupGraphLayout {
+  id               String         @id @default(cuid())
+  groupId          String
+  groupContainerId String
+  positionX        Float
+  positionY        Float
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  group            Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupContainer   GroupContainer @relation(fields: [groupContainerId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, groupContainerId])
+}

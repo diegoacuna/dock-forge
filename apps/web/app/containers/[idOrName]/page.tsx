@@ -1,0 +1,105 @@
+"use client";
+
+import { use, useState } from "react";
+import type { ContainerDetail } from "@dockforge/shared";
+import { useApiQuery } from "../../../lib/api";
+import { formatTimestamp } from "../../../lib/utils";
+import { CopyButton, PageHeader, Panel } from "../../../components/ui";
+
+const tabs = ["Overview", "Environment", "Mounts / Volumes", "Networks", "Compose metadata", "Raw inspect", "Terminal helpers"] as const;
+
+export default function ContainerDetailPage({ params }: { params: Promise<{ idOrName: string }> }) {
+  const resolvedParams = use(params);
+  const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
+  const { data } = useApiQuery<ContainerDetail>(["container", resolvedParams.idOrName], `/containers/${resolvedParams.idOrName}`, 8_000);
+
+  const overview = data?.overview;
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title={overview?.name ?? resolvedParams.idOrName} description="Raw Docker inspect plus focused operational views." />
+
+      <div className="flex flex-wrap gap-2">
+        {tabs.map((item) => (
+          <button
+            key={item}
+            onClick={() => setTab(item)}
+            className={`rounded-2xl px-4 py-2 text-sm ${tab === item ? "bg-slate-950 text-white" : "bg-white text-slate-700"}`}
+          >
+            {item}
+          </button>
+        ))}
+      </div>
+
+      {tab === "Overview" && overview ? (
+        <Panel className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <p><strong>Docker ID:</strong> {overview.id}</p>
+            <p><strong>Image:</strong> {overview.image}</p>
+            <p><strong>State:</strong> {overview.state}</p>
+            <p><strong>Started:</strong> {formatTimestamp(overview.startedAt)}</p>
+            <p><strong>Restart policy:</strong> {overview.restartPolicy ?? "—"}</p>
+            <p><strong>Command:</strong> {overview.command ?? "—"}</p>
+            <p><strong>Entrypoint:</strong> {overview.entrypoint.join(" ") || "—"}</p>
+          </div>
+          <div className="space-y-2">
+            <p><strong>Ports:</strong> {overview.ports.map((port) => port.label).join(", ") || "—"}</p>
+            <p><strong>Health:</strong> {overview.health}</p>
+            <div>
+              <strong>Labels</strong>
+              <pre className="mt-2 rounded-2xl bg-slate-950 p-4 text-xs text-slate-100">{JSON.stringify(overview.labels, null, 2)}</pre>
+            </div>
+          </div>
+        </Panel>
+      ) : null}
+
+      {tab === "Environment" && overview ? (
+        <Panel>
+          <div className="mb-3 flex justify-end"><CopyButton text={overview.environment.join("\n")} /></div>
+          <pre className="rounded-2xl bg-slate-950 p-4 text-xs text-slate-100">{overview.environment.join("\n")}</pre>
+        </Panel>
+      ) : null}
+
+      {tab === "Mounts / Volumes" && overview ? (
+        <Panel>
+          <pre className="rounded-2xl bg-slate-950 p-4 text-xs text-slate-100">{JSON.stringify(overview.mounts, null, 2)}</pre>
+        </Panel>
+      ) : null}
+
+      {tab === "Networks" && overview ? (
+        <Panel>
+          <pre className="rounded-2xl bg-slate-950 p-4 text-xs text-slate-100">{JSON.stringify(overview.networks, null, 2)}</pre>
+        </Panel>
+      ) : null}
+
+      {tab === "Compose metadata" && overview ? (
+        <Panel>
+          <pre className="rounded-2xl bg-slate-950 p-4 text-xs text-slate-100">{JSON.stringify(overview.compose, null, 2)}</pre>
+        </Panel>
+      ) : null}
+
+      {tab === "Raw inspect" && overview ? (
+        <Panel>
+          <div className="mb-3 flex justify-end"><CopyButton text={JSON.stringify(overview.inspect, null, 2)} /></div>
+          <pre className="rounded-2xl bg-slate-950 p-4 text-xs text-slate-100">{JSON.stringify(overview.inspect, null, 2)}</pre>
+        </Panel>
+      ) : null}
+
+      {tab === "Terminal helpers" && data ? (
+        <Panel className="space-y-3">
+          {data.terminalCommands.map((command) => (
+            <div key={command.command} className="rounded-2xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="font-medium text-slate-950">{command.label}</p>
+                  <code className="text-sm text-slate-600">{command.command}</code>
+                </div>
+                <CopyButton text={command.command} />
+              </div>
+            </div>
+          ))}
+        </Panel>
+      ) : null}
+    </div>
+  );
+}

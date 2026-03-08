@@ -1,0 +1,26 @@
+{
+  "name": "dock-forge",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@8.7.4",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @dockforge/api --filter @dockforge/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "db:generate": "pnpm --filter @dockforge/db db:generate",
+    "db:migrate": "pnpm --filter @dockforge/db db:migrate"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "concurrently": "^9.2.0",
+    "prisma": "^6.19.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.1.1"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.2"
+  }
+}

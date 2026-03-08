@@ -1,0 +1,14 @@
+node_modules
+.next
+dist
+coverage
+.turbo
+.pnpm-store
+*.log
+.env
+.env.local
+apps/web/.env.local
+packages/db/prisma/dev.db
+packages/db/prisma/dev.db-journal
+packages/db/generated
+

@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "../..",
+    "composite": true,
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "../../packages/shared/src/**/*.ts",
+    "../../packages/db/src/**/*.ts",
+    "../../packages/db/generated/client/**/*.ts",
+    "../../packages/docker-runtime/src/**/*.ts",
+    "../../packages/orchestrator/src/**/*.ts"
+  ]
+}
