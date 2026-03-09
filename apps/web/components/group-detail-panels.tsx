@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import type { BulkAddGroupContainersResult, ContainerSummary, GroupDetail } from "@dockforge/shared";
 import { getFolderLabel } from "@dockforge/shared";
@@ -288,6 +289,64 @@ export const GroupAttachPanel = ({
               ) : null}
             </div>
           </div>
+        </div>
+      </div>
+    </Panel>
+  );
+};
+
+export const GroupAttachOnboardingCallout = ({
+  group,
+  containers,
+}: {
+  group: GroupDetail;
+  containers: ContainerSummary[];
+}) => {
+  const attachedKeys = new Set(group.containers.map((container) => container.containerKey));
+  const availableContainers = containers.filter((container) => !attachedKeys.has(container.containerKey));
+  const hasAvailableContainers = availableContainers.length > 0;
+  const hasDetectedContainers = containers.length > 0;
+
+  return (
+    <Panel className="border-orange-200 bg-orange-50/70">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="space-y-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.28em] text-orange-700">Onboarding</p>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-950">Attach containers to this group next</h2>
+          </div>
+
+          {hasAvailableContainers ? (
+            <p className="max-w-3xl text-sm text-slate-700">
+              Your group is ready. The fastest path is usually <strong>Attach folder</strong>, which pulls in all current
+              containers from one detected working directory. If you only need part of the stack, use <strong>Single container</strong>.
+            </p>
+          ) : null}
+
+          {!hasDetectedContainers ? (
+            <p className="max-w-3xl text-sm text-slate-700">
+              DockForge has not detected local containers yet, so there is nothing to attach right now. Start or create your
+              containers first, then return here to continue onboarding.
+            </p>
+          ) : null}
+
+          {hasDetectedContainers && !hasAvailableContainers ? (
+            <p className="max-w-3xl text-sm text-slate-700">
+              DockForge detected containers, but there are no unattached containers available for this group right now. Review
+              the runtime inventory and return here if the stack changes.
+            </p>
+          ) : null}
+
+          <div className="flex flex-wrap gap-2">
+            <Badge tone="accent">{availableContainers.length} ready to attach</Badge>
+            <Badge tone="neutral">{group.containers.length} already in this group</Badge>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <Link href="/containers">
+            <Button variant="ghost">Open Containers</Button>
+          </Link>
         </div>
       </div>
     </Panel>

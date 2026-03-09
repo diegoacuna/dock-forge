@@ -1,14 +1,42 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import type { DashboardData } from "@dockforge/shared";
 import { useApiQuery } from "../lib/api";
 import { formatTimestamp } from "../lib/utils";
+import { DashboardOnboarding, DashboardOnboardingEmptyState } from "../components/dashboard-onboarding";
+import { DASHBOARD_ONBOARDING_DISMISSED_KEY, shouldShowDashboardOnboarding } from "../lib/onboarding";
 import { PageHeader, Panel, StatCard } from "../components/ui";
 import { StateBadge } from "../components/status";
 
 export default function DashboardPage() {
   const { data } = useApiQuery<DashboardData>(["dashboard"], "/dashboard", 10_000);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+
+  useEffect(() => {
+    const dismissed = window.localStorage.getItem(DASHBOARD_ONBOARDING_DISMISSED_KEY) === "true";
+    setOnboardingDismissed(dismissed);
+  }, []);
+
+  useEffect(() => {
+    if ((data?.totalGroups ?? 0) > 0) {
+      window.localStorage.removeItem(DASHBOARD_ONBOARDING_DISMISSED_KEY);
+      setOnboardingDismissed(false);
+    }
+  }, [data?.totalGroups]);
+
+  const dismissOnboarding = () => {
+    window.localStorage.setItem(DASHBOARD_ONBOARDING_DISMISSED_KEY, "true");
+    setOnboardingDismissed(true);
+  };
+
+  const restartOnboarding = () => {
+    window.localStorage.removeItem(DASHBOARD_ONBOARDING_DISMISSED_KEY);
+    setOnboardingDismissed(false);
+  };
+
+  const showOnboarding = shouldShowDashboardOnboarding(data?.totalGroups ?? 0, onboardingDismissed);
 
   return (
     <div className="space-y-6">
@@ -16,6 +44,10 @@ export default function DashboardPage() {
         title="Dashboard"
         description="Craft your local Docker empire with group orchestration, dependency-aware startup, and live inspection."
       />
+
+      {showOnboarding ? <DashboardOnboarding onSkip={dismissOnboarding} /> : null}
+
+      {!showOnboarding && (data?.totalGroups ?? 0) === 0 ? <DashboardOnboardingEmptyState onRestart={restartOnboarding} /> : null}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Containers" value={data?.totalContainers ?? 0} hint={`${data?.runningContainers ?? 0} running`} />
@@ -62,4 +94,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-

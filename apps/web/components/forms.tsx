@@ -1,17 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { ContainerSummary, Group } from "@dockforge/shared";
 import { useApiMutation } from "../lib/api";
+import { getPostCreateGroupHref } from "../lib/onboarding";
 import { Button, Input, Panel, Select, TextArea } from "./ui";
 
 export const CreateGroupForm = () => {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState("#f97316");
+  const fromOnboarding = searchParams.get("from") === "onboarding";
 
   const mutation = useApiMutation<
     { name: string; slug: string; description: string | null; color: string | null },
@@ -90,7 +93,7 @@ export const CreateGroupForm = () => {
                 description: description || null,
                 color,
               });
-              router.push(`/groups/${group.id}`);
+              router.push(getPostCreateGroupHref(group.id, fromOnboarding));
             }}
           >
             {mutation.isPending ? "Creating..." : "Create group"}

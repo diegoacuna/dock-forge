@@ -1,10 +1,12 @@
 "use client";
 
 import { use, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { ContainerSummary, GroupDetail, GroupRun, OrchestrationPlan } from "@dockforge/shared";
 import { fetchJson, useApiQuery } from "../../../lib/api";
+import { getInitialGroupDetailTab } from "../../../lib/onboarding";
 import { formatTimestamp } from "../../../lib/utils";
-import { ExecutionOrderPanel, GroupAttachPanel } from "../../../components/group-detail-panels";
+import { ExecutionOrderPanel, GroupAttachOnboardingCallout, GroupAttachPanel } from "../../../components/group-detail-panels";
 import { GroupGraphPanel } from "../../../components/group-graph-panel";
 import { StateBadge } from "../../../components/status";
 import { Button, PageHeader, Panel, Table } from "../../../components/ui";
@@ -13,11 +15,14 @@ const tabs = ["Overview", "Containers", "Graph", "Execution Order", "Activity"] 
 
 export default function GroupDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
-  const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
+  const searchParams = useSearchParams();
+  const onboardingMode = searchParams.get("onboarding");
+  const [tab, setTab] = useState<(typeof tabs)[number]>(getInitialGroupDetailTab(onboardingMode) as (typeof tabs)[number]);
   const { data: group } = useApiQuery<GroupDetail>(["group", resolvedParams.id], `/groups/${resolvedParams.id}`, 8_000);
   const { data: containers } = useApiQuery<ContainerSummary[]>(["containers"], "/containers", 8_000);
   const { data: runs } = useApiQuery<GroupRun[]>(["group-runs", resolvedParams.id], `/groups/${resolvedParams.id}/runs`, 8_000);
   const { data: plan } = useApiQuery<OrchestrationPlan>(["group-plan", resolvedParams.id], `/groups/${resolvedParams.id}/plan`);
+  const showAttachOnboarding = onboardingMode === "attach";
 
   const runAction = async (action: "start" | "stop" | "restart" | "start-clean") => {
     await fetchJson(`/groups/${resolvedParams.id}/${action}`, {
@@ -121,6 +126,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
       {tab === "Containers" && group ? (
         <div className="space-y-6">
+          {containers && showAttachOnboarding ? <GroupAttachOnboardingCallout group={group} containers={containers} /> : null}
           {containers ? <GroupAttachPanel group={group} containers={containers} /> : null}
           <Panel>
             <Table>
