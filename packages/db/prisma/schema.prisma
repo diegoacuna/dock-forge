@@ -20,6 +20,7 @@ model Group {
   edges         DependencyEdge[]
   runs          GroupRun[]
   graphLayouts  GroupGraphLayout[]
+  executionFolders GroupExecutionFolder[]
 }
 
 model GroupContainer {
@@ -27,6 +28,7 @@ model GroupContainer {
   groupId             String
   containerKey        String
   containerNameSnapshot String
+  folderLabelSnapshot String             @default("Standalone")
   lastResolvedDockerId String?
   aliasName           String?
   notes               String?
@@ -41,6 +43,19 @@ model GroupContainer {
   runSteps            GroupRunStep[]
 
   @@unique([groupId, containerKey])
+}
+
+model GroupExecutionFolder {
+  id          String   @id @default(cuid())
+  groupId     String
+  folderLabel String
+  stage       Int
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, folderLabel])
 }
 
 model DependencyEdge {

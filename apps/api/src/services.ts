@@ -1,10 +1,14 @@
 import { prisma } from "@dockforge/db";
 import { DockerRuntimeClient, resolveContainerByKey } from "@dockforge/docker-runtime";
 import {
+  getFolderLabel,
   canonicalizeContainerKey,
   formatDate,
+  type BulkAddGroupContainersResult,
   type ContainerSummary,
   type Group,
+  type GroupExecutionFolder,
+  type GroupExecutionStage,
   type GroupContainer as GroupContainerDto,
   type GroupDetail,
   type GroupRun,
@@ -16,6 +20,11 @@ const includeGroup = {
   containers: true,
   edges: true,
   graphLayouts: true,
+  executionFolders: {
+    orderBy: {
+      stage: "asc" as const,
+    },
+  },
   runs: {
     orderBy: {
       startedAt: "desc" as const,
@@ -25,6 +34,214 @@ const includeGroup = {
 } as const;
 
 export const dockerClient = new DockerRuntimeClient();
+
+const mapGroupContainer = (
+  container: {
+    id: string;
+    groupId: string;
+    containerKey: string;
+    containerNameSnapshot: string;
+    folderLabelSnapshot: string;
+    lastResolvedDockerId: string | null;
+    aliasName: string | null;
+    notes: string | null;
+    includeInStartAll: boolean;
+    includeInStopAll: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  },
+  runtime?: ContainerSummary,
+): GroupContainerDto => ({
+  id: container.id,
+  groupId: container.groupId,
+  containerKey: container.containerKey,
+  containerNameSnapshot: container.containerNameSnapshot,
+  folderLabelSnapshot: container.folderLabelSnapshot,
+  lastResolvedDockerId: container.lastResolvedDockerId,
+  aliasName: container.aliasName,
+  notes: container.notes,
+  includeInStartAll: container.includeInStartAll,
+  includeInStopAll: container.includeInStopAll,
+  runtimeState: runtime?.state ?? "unknown",
+  runtimeHealth: runtime?.health ?? "unknown",
+  runtimeStatusText: runtime?.status ?? null,
+  createdAt: container.createdAt.toISOString(),
+  updatedAt: container.updatedAt.toISOString(),
+});
+
+const deriveFolderStagesFromEdges = (
+  containers: Array<{ id: string; folderLabelSnapshot: string }>,
+  edges: Array<{ fromGroupContainerId: string; toGroupContainerId: string }>,
+) => {
+  const folderLabels = [...new Set(containers.map((container) => container.folderLabelSnapshot))].sort((left, right) =>
+    left.localeCompare(right),
+  );
+
+  if (folderLabels.length <= 1) {
+    return [folderLabels];
+  }
+
+  const folderByContainerId = new Map(containers.map((container) => [container.id, container.folderLabelSnapshot]));
+  const adjacency = new Map(folderLabels.map((label) => [label, new Set<string>()]));
+  const inDegree = new Map(folderLabels.map((label) => [label, 0]));
+
+  for (const edge of edges) {
+    const fromFolder = folderByContainerId.get(edge.fromGroupContainerId);
+    const toFolder = folderByContainerId.get(edge.toGroupContainerId);
+    if (!fromFolder || !toFolder || fromFolder === toFolder) {
+      continue;
+    }
+
+    const outgoing = adjacency.get(fromFolder);
+    if (outgoing?.has(toFolder)) {
+      continue;
+    }
+
+    outgoing?.add(toFolder);
+    inDegree.set(toFolder, (inDegree.get(toFolder) ?? 0) + 1);
+  }
+
+  if ([...adjacency.values()].every((targets) => targets.size === 0)) {
+    return [folderLabels];
+  }
+
+  const queue = folderLabels.filter((label) => (inDegree.get(label) ?? 0) === 0).sort((left, right) => left.localeCompare(right));
+  const stages: string[][] = [];
+
+  while (queue.length) {
+    const currentStage = [...queue].sort((left, right) => left.localeCompare(right));
+    queue.length = 0;
+    stages.push(currentStage);
+
+    for (const current of currentStage) {
+      const nextFolders = [...(adjacency.get(current) ?? [])].sort((left, right) => left.localeCompare(right));
+      for (const next of nextFolders) {
+        const nextDegree = (inDegree.get(next) ?? 0) - 1;
+        inDegree.set(next, nextDegree);
+        if (nextDegree === 0) {
+          queue.push(next);
+        }
+      }
+    }
+
+    queue.sort((left, right) => left.localeCompare(right));
+  }
+
+  return stages.flat().length === folderLabels.length ? stages : [folderLabels];
+};
+
+const resolveExecutionFolderStages = (
+  containers: Array<{ id: string; folderLabelSnapshot: string }>,
+  persistedFolders: Array<{ folderLabel: string; stage: number }>,
+  edges: Array<{ fromGroupContainerId: string; toGroupContainerId: string }>,
+) => {
+  const availableFolders = [...new Set(containers.map((container) => container.folderLabelSnapshot))];
+
+  if (availableFolders.length === 0) {
+    return [] as string[][];
+  }
+
+  if (persistedFolders.length === 0) {
+    return deriveFolderStagesFromEdges(containers, edges);
+  }
+
+  const groupedPersisted = new Map<number, string[]>();
+  for (const folder of [...persistedFolders].sort((left, right) => left.stage - right.stage || left.folderLabel.localeCompare(right.folderLabel))) {
+    if (!availableFolders.includes(folder.folderLabel)) {
+      continue;
+    }
+
+    const current = groupedPersisted.get(folder.stage) ?? [];
+    if (!current.includes(folder.folderLabel)) {
+      current.push(folder.folderLabel);
+      groupedPersisted.set(folder.stage, current);
+    }
+  }
+
+  const persistedStages = [...groupedPersisted.entries()]
+    .sort(([leftStage], [rightStage]) => leftStage - rightStage)
+    .map(([, folderLabels]) => folderLabels.sort((left, right) => left.localeCompare(right)))
+    .filter((folderLabels) => folderLabels.length > 0);
+  const persistedFolderLabels = persistedStages.flat();
+  const remaining = availableFolders
+    .filter((folderLabel) => !persistedFolderLabels.includes(folderLabel))
+    .sort((left, right) => left.localeCompare(right));
+
+  return [...persistedStages, ...remaining.map((folderLabel) => [folderLabel])];
+};
+
+const mapExecutionFolders = (
+  containers: Array<{ id: string; folderLabelSnapshot: string }>,
+  persistedFolders: Array<{ folderLabel: string; stage: number }>,
+  edges: Array<{ fromGroupContainerId: string; toGroupContainerId: string }>,
+): GroupExecutionFolder[] => {
+  const stages = resolveExecutionFolderStages(containers, persistedFolders, edges);
+  const counts = containers.reduce<Map<string, number>>((accumulator, container) => {
+    accumulator.set(container.folderLabelSnapshot, (accumulator.get(container.folderLabelSnapshot) ?? 0) + 1);
+    return accumulator;
+  }, new Map());
+
+  return stages.flatMap((folderLabels, stage) =>
+    folderLabels.map((folderLabel) => ({
+      folderLabel,
+      stage,
+      containerCount: counts.get(folderLabel) ?? 0,
+    })),
+  );
+};
+
+const mapExecutionStages = (executionFolders: GroupExecutionFolder[]): GroupExecutionStage[] => {
+  const grouped = new Map<number, GroupExecutionFolder[]>();
+
+  for (const folder of executionFolders) {
+    const current = grouped.get(folder.stage) ?? [];
+    current.push(folder);
+    grouped.set(folder.stage, current);
+  }
+
+  return [...grouped.entries()]
+    .sort(([leftStage], [rightStage]) => leftStage - rightStage)
+    .map(([stage, folders]) => ({
+      stage,
+      folders: [...folders].sort((left, right) => left.folderLabel.localeCompare(right.folderLabel)),
+    }));
+};
+
+const buildExecutionEdges = (
+  groupId: string,
+  containers: Array<{ id: string; folderLabelSnapshot: string }>,
+  executionFolders: GroupExecutionFolder[],
+): GraphEdge[] => {
+  const membersByFolder = containers.reduce<Map<string, string[]>>((accumulator, container) => {
+    const current = accumulator.get(container.folderLabelSnapshot) ?? [];
+    current.push(container.id);
+    accumulator.set(container.folderLabelSnapshot, current);
+    return accumulator;
+  }, new Map());
+
+  const edges: GraphEdge[] = [];
+  const stages = mapExecutionStages(executionFolders);
+  for (let index = 0; index < stages.length - 1; index += 1) {
+    const currentFolders = stages[index]?.folders.map((folder) => folder.folderLabel) ?? [];
+    const nextFolders = stages[index + 1]?.folders.map((folder) => folder.folderLabel) ?? [];
+
+    for (const currentFolder of currentFolders) {
+      for (const nextFolder of nextFolders) {
+        for (const sourceId of membersByFolder.get(currentFolder) ?? []) {
+          for (const targetId of membersByFolder.get(nextFolder) ?? []) {
+            edges.push({
+              groupId,
+              fromGroupContainerId: sourceId,
+              toGroupContainerId: targetId,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return edges;
+};
 
 const mapGroupRunStep = (step: {
   id: string;
@@ -102,6 +319,9 @@ export const getGroupDetail = async (groupId: string): Promise<GroupDetail> => {
         containers: true,
         edges: true,
         graphLayouts: true,
+        executionFolders: {
+          orderBy: { stage: "asc" },
+        },
         runs: {
           orderBy: { startedAt: "desc" },
           take: 1,
@@ -112,6 +332,8 @@ export const getGroupDetail = async (groupId: string): Promise<GroupDetail> => {
   ]);
 
   const runtimeMap = new Map(runtimeContainers.map((container) => [container.containerKey, container]));
+
+  const executionFolders = mapExecutionFolders(group.containers, group.executionFolders, group.edges);
 
   return {
     id: group.id,
@@ -124,25 +346,9 @@ export const getGroupDetail = async (groupId: string): Promise<GroupDetail> => {
     lastRunStatus: (group.runs[0]?.status as GroupDetail["lastRunStatus"]) ?? null,
     createdAt: group.createdAt.toISOString(),
     updatedAt: group.updatedAt.toISOString(),
-    containers: group.containers.map((container: (typeof group.containers)[number]): GroupContainerDto => {
-      const runtime = runtimeMap.get(container.containerKey);
-      return {
-        id: container.id,
-        groupId: container.groupId,
-        containerKey: container.containerKey,
-        containerNameSnapshot: container.containerNameSnapshot,
-        lastResolvedDockerId: container.lastResolvedDockerId,
-        aliasName: container.aliasName,
-        notes: container.notes,
-        includeInStartAll: container.includeInStartAll,
-        includeInStopAll: container.includeInStopAll,
-        runtimeState: runtime?.state ?? "unknown",
-        runtimeHealth: runtime?.health ?? "unknown",
-        runtimeStatusText: runtime?.status ?? null,
-        createdAt: container.createdAt.toISOString(),
-        updatedAt: container.updatedAt.toISOString(),
-      };
-    }),
+    containers: group.containers.map((container: (typeof group.containers)[number]): GroupContainerDto =>
+      mapGroupContainer(container, runtimeMap.get(container.containerKey)),
+    ),
     edges: group.edges.map((edge: (typeof group.edges)[number]) => ({
       id: edge.id,
       groupId: edge.groupId,
@@ -160,6 +366,8 @@ export const getGroupDetail = async (groupId: string): Promise<GroupDetail> => {
       positionX: layout.positionX,
       positionY: layout.positionY,
     })),
+    executionFolders,
+    executionStages: mapExecutionStages(executionFolders),
   };
 };
 
@@ -270,16 +478,12 @@ export const validateGroupGraph = async (groupId: string, edges?: GraphEdge[]) =
 
 export const getGroupPlan = async (groupId: string, action: "START" | "STOP" | "RESTART" | "START_CLEAN", targetGroupContainerId?: string | null) => {
   const group = await getGroupDetail(groupId);
+  const planningEdges = buildExecutionEdges(groupId, group.containers, group.executionFolders);
   return buildPlan(
     action === "RESTART" || action === "START_CLEAN" ? "START" : action,
     groupId,
     group.containers,
-    group.edges.map((edge) => ({
-      id: edge.id,
-      groupId: edge.groupId,
-      fromGroupContainerId: edge.fromGroupContainerId,
-      toGroupContainerId: edge.toGroupContainerId,
-    })),
+    planningEdges,
     targetGroupContainerId ?? null,
   );
 };
@@ -350,12 +554,7 @@ export const executeGroupAction = async ({
   targetGroupContainerId?: string | null;
 }) => {
   const group = await getGroupDetail(groupId);
-  const graphEdges = group.edges.map((edge) => ({
-    id: edge.id,
-    groupId: edge.groupId,
-    fromGroupContainerId: edge.fromGroupContainerId,
-    toGroupContainerId: edge.toGroupContainerId,
-  }));
+  const graphEdges = buildExecutionEdges(groupId, group.containers, group.executionFolders);
 
   const actionForPlan = action === "RESTART" || action === "START_CLEAN" ? "START" : action;
   const plan = buildPlan(actionForPlan, groupId, group.containers, graphEdges, targetGroupContainerId ?? null);
@@ -497,4 +696,136 @@ export const ensureContainerMembershipPayload = async (groupId: string, containe
   }
 
   return container;
+};
+
+export const createGroupContainerMembership = async (input: {
+  groupId: string;
+  containerKey: string;
+  containerNameSnapshot?: string;
+  aliasName?: string | null;
+  notes?: string | null;
+  includeInStartAll?: boolean;
+  includeInStopAll?: boolean;
+}) => {
+  const runtime = await ensureContainerMembershipPayload(input.groupId, input.containerKey);
+  const created = await prisma.groupContainer.create({
+    data: {
+      groupId: input.groupId,
+      containerKey: runtime.containerKey,
+      containerNameSnapshot: input.containerNameSnapshot || runtime.name,
+      folderLabelSnapshot: getFolderLabel(runtime.compose.workingDir),
+      lastResolvedDockerId: runtime.id,
+      aliasName: input.aliasName ?? null,
+      notes: input.notes ?? null,
+      includeInStartAll: input.includeInStartAll ?? true,
+      includeInStopAll: input.includeInStopAll ?? true,
+    },
+  });
+
+  return mapGroupContainer(created, runtime);
+};
+
+export const bulkAttachGroupContainers = async (groupId: string, containerKeys: string[]): Promise<BulkAddGroupContainersResult> => {
+  const group = await prisma.group.findUniqueOrThrow({
+    where: { id: groupId },
+    include: {
+      containers: true,
+    },
+  });
+
+  const existingKeys = new Set(group.containers.map((container) => container.containerKey));
+  const added: GroupContainerDto[] = [];
+  const skipped: string[] = [];
+
+  for (const containerKey of containerKeys) {
+    const canonicalKey = canonicalizeContainerKey(containerKey);
+    if (existingKeys.has(canonicalKey)) {
+      skipped.push(canonicalKey);
+      continue;
+    }
+
+    const runtime = await ensureContainerMembershipPayload(groupId, canonicalKey);
+    if (existingKeys.has(runtime.containerKey)) {
+      skipped.push(runtime.containerKey);
+      continue;
+    }
+
+    const created = await prisma.groupContainer.create({
+      data: {
+        groupId,
+        containerKey: runtime.containerKey,
+        containerNameSnapshot: runtime.name,
+        folderLabelSnapshot: getFolderLabel(runtime.compose.workingDir),
+        lastResolvedDockerId: runtime.id,
+        includeInStartAll: true,
+        includeInStopAll: true,
+      },
+    });
+
+    existingKeys.add(runtime.containerKey);
+    added.push(mapGroupContainer(created, runtime));
+  }
+
+  return { added, skipped };
+};
+
+export const saveGroupExecutionOrder = async (groupId: string, stages: string[][]) => {
+  const group = await prisma.group.findUniqueOrThrow({
+    where: { id: groupId },
+    include: {
+      containers: true,
+      edges: true,
+      executionFolders: {
+        orderBy: { stage: "asc" },
+      },
+    },
+  });
+
+  const knownFolders = [...new Set(group.containers.map((container) => container.folderLabelSnapshot))].sort((left, right) =>
+    left.localeCompare(right),
+  );
+  const normalizedStages = stages
+    .map((stage) => stage.map((folderLabel) => folderLabel.trim()).filter(Boolean))
+    .filter((stage) => stage.length > 0);
+  const requestedFolders = normalizedStages.flat();
+  const uniqueRequestedFolders = [...new Set(requestedFolders)];
+
+  if (requestedFolders.length !== uniqueRequestedFolders.length) {
+    throw new Error("Execution order contains duplicate folders");
+  }
+
+  if (
+    uniqueRequestedFolders.length !== knownFolders.length ||
+    uniqueRequestedFolders.some((folderLabel) => !knownFolders.includes(folderLabel))
+  ) {
+    throw new Error("Execution order must include each attached folder exactly once");
+  }
+
+  const operations = [
+    prisma.groupExecutionFolder.deleteMany({
+      where: { groupId },
+    }),
+  ];
+
+  if (uniqueRequestedFolders.length > 0) {
+    operations.push(
+      prisma.groupExecutionFolder.createMany({
+        data: normalizedStages.flatMap((folderLabels, stage) =>
+          folderLabels.map((folderLabel, indexWithinStage) => ({
+            groupId,
+            folderLabel,
+            stage,
+            position:
+              normalizedStages
+                .slice(0, stage)
+                .reduce((count, currentStage) => count + currentStage.length, 0) + indexWithinStage,
+          })),
+        ),
+      }),
+    );
+  }
+
+  await prisma.$transaction(operations);
+
+  return getGroupDetail(groupId);
 };

@@ -1,4 +1,5 @@
 import { clsx, type ClassValue } from "clsx";
+export { getFolderLabel } from "@dockforge/shared";
 import { twMerge } from "tailwind-merge";
 
 export const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
@@ -12,17 +13,6 @@ export const formatTimestamp = (value: string | null | undefined) => {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
-};
-
-export const getFolderLabel = (workingDir: string | null | undefined) => {
-  if (!workingDir) {
-    return "Standalone";
-  }
-
-  const normalized = workingDir.replace(/[\\/]+$/, "");
-  const segments = normalized.split(/[\\/]/).filter(Boolean);
-
-  return segments.at(-1) || "Standalone";
 };
 
 export const shortenImageName = (image: string, maxLength = 34) => {

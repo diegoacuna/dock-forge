@@ -7,6 +7,7 @@ const members = [
     groupId: "group-1",
     containerKey: "postgres",
     containerNameSnapshot: "postgres",
+    folderLabelSnapshot: "infra",
     lastResolvedDockerId: null,
     aliasName: null,
     notes: null,
@@ -23,6 +24,7 @@ const members = [
     groupId: "group-1",
     containerKey: "migrate",
     containerNameSnapshot: "migrate",
+    folderLabelSnapshot: "infra",
     lastResolvedDockerId: null,
     aliasName: null,
     notes: null,
@@ -39,6 +41,7 @@ const members = [
     groupId: "group-1",
     containerKey: "web",
     containerNameSnapshot: "web",
+    folderLabelSnapshot: "app",
     lastResolvedDockerId: null,
     aliasName: null,
     notes: null,
@@ -109,4 +112,3 @@ describe("orchestrator graph", () => {
     expect(plan.layers.map((layer) => layer.members.map((member) => member.id))).toEqual([["web"], ["migrate"], ["db"]]);
   });
 });
-

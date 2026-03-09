@@ -12,6 +12,7 @@ import {
   type ContainerState,
   type NetworkDetail,
   type NetworkSummary,
+  type TerminalShell,
   type VolumeDetail,
   type VolumeSummary,
 } from "@dockforge/shared";
@@ -31,6 +32,24 @@ type LogStream = "stdout" | "stderr";
 type LogStreamCallbacks = {
   onEntry: (entry: ContainerLogEntry) => void;
   onError?: (error: Error) => void;
+};
+
+export type TerminalSessionCallbacks = {
+  onOutput: (data: string) => void;
+  onExit?: (exitCode: number | null) => void;
+  onError?: (error: Error) => void;
+};
+
+export type OpenContainerTerminalOptions = {
+  shell: TerminalShell;
+  cols: number;
+  rows: number;
+};
+
+export type ContainerTerminalSession = {
+  write: (data: string) => void;
+  resize: (cols: number, rows: number) => Promise<void>;
+  close: () => void;
 };
 
 const HEALTHCHECK_NONE = "none";
@@ -444,6 +463,98 @@ export class DockerRuntimeClient {
     };
 
     return { close };
+  }
+
+  async openContainerTerminal(
+    idOrName: string,
+    options: OpenContainerTerminalOptions,
+    callbacks: TerminalSessionCallbacks,
+  ): Promise<ContainerTerminalSession> {
+    const container = await this.resolveContainer(idOrName);
+    const inspect = await container.inspect();
+
+    if (inspect.State?.Status !== "running") {
+      throw new Error(`Container ${idOrName} is not running`);
+    }
+
+    const exec = await container.exec({
+      AttachStdin: true,
+      AttachStdout: true,
+      AttachStderr: true,
+      Cmd: [options.shell],
+      ConsoleSize: [options.rows, options.cols],
+      Tty: true,
+    });
+    const stream = await exec.start({
+      hijack: true,
+      stdin: true,
+      Tty: true,
+    });
+
+    let closed = false;
+    let exitReported = false;
+
+    const reportExit = async () => {
+      if (exitReported || closed) {
+        return;
+      }
+
+      exitReported = true;
+
+      try {
+        const result = await exec.inspect();
+        callbacks.onExit?.(result.ExitCode ?? null);
+      } catch (error) {
+        callbacks.onError?.(error instanceof Error ? error : new Error("Failed to inspect terminal exec"));
+      }
+    };
+
+    const handleData = (chunk: Buffer | string) => {
+      callbacks.onOutput(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk);
+    };
+    const handleEnd = () => {
+      void reportExit();
+    };
+    const handleClose = () => {
+      void reportExit();
+    };
+    const handleError = (error: Error) => {
+      callbacks.onError?.(error);
+    };
+
+    stream.on("data", handleData);
+    stream.on("end", handleEnd);
+    stream.on("close", handleClose);
+    stream.on("error", handleError);
+
+    return {
+      write: (data: string) => {
+        if (closed) {
+          return;
+        }
+
+        stream.write(data);
+      },
+      resize: async (cols: number, rows: number) => {
+        if (closed) {
+          return;
+        }
+
+        await exec.resize({ h: rows, w: cols });
+      },
+      close: () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        stream.off("data", handleData);
+        stream.off("end", handleEnd);
+        stream.off("close", handleClose);
+        stream.off("error", handleError);
+        (stream as NodeJS.ReadWriteStream & { destroy?: () => void }).destroy?.();
+      },
+    };
   }
 
   async startContainer(idOrName: string) {

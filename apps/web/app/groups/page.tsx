@@ -3,7 +3,6 @@
 import Link from "next/link";
 import type { Group } from "@dockforge/shared";
 import { useApiMutation, useApiQuery } from "../../lib/api";
-import { CreateGroupForm } from "../../components/forms";
 import { PageHeader, Panel, Table, Button } from "../../components/ui";
 import { StateBadge } from "../../components/status";
 
@@ -17,14 +16,21 @@ export default function GroupsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Groups" description="App-managed orchestration groups with shared containers and group-specific dependency DAGs." />
-      <CreateGroupForm />
+      <PageHeader
+        title="Groups"
+        description="App-managed orchestration groups with shared containers and group-specific dependency DAGs."
+        actions={
+          <Link href="/groups/new">
+            <Button>Create group</Button>
+          </Link>
+        }
+      />
       <Panel>
         <Table>
           <thead>
             <tr className="text-left text-xs uppercase tracking-[0.2em] text-slate-500">
               <th className="px-3 py-2">Name</th>
-              <th className="px-3 py-2">Members</th>
+              <th className="px-3 py-2">Containers</th>
               <th className="px-3 py-2">Dependencies</th>
               <th className="px-3 py-2">Last run</th>
               <th className="px-3 py-2">Actions</th>
@@ -34,8 +40,17 @@ export default function GroupsPage() {
             {data?.map((group) => (
               <tr key={group.id} className="bg-slate-50">
                 <td className="px-3 py-4">
-                  <Link href={`/groups/${group.id}`} className="font-medium text-slate-950">{group.name}</Link>
-                  <p className="text-xs text-slate-500">{group.slug}</p>
+                  <div className="flex items-start gap-3">
+                    <span
+                      className="mt-0.5 h-4 w-4 shrink-0 rounded-md border border-slate-200 shadow-sm"
+                      style={{ backgroundColor: group.color ?? "#e2e8f0" }}
+                      aria-hidden="true"
+                    />
+                    <div>
+                      <Link href={`/groups/${group.id}`} className="font-medium text-slate-950">{group.name}</Link>
+                      <p className="text-xs text-slate-500">{group.slug}</p>
+                    </div>
+                  </div>
                 </td>
                 <td className="px-3 py-4">{group.memberCount}</td>
                 <td className="px-3 py-4">{group.dependencyCount}</td>
@@ -59,4 +74,3 @@ export default function GroupsPage() {
     </div>
   );
 }
-

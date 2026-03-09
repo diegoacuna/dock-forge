@@ -1,22 +1,32 @@
+import { randomUUID } from "node:crypto";
+import { URL } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
 import {
+  canonicalizeContainerKey,
   containerLogsQuerySchema,
   addGroupContainerSchema,
+  bulkAddGroupContainersSchema,
   createDependencyEdgeSchema,
   createGroupSchema,
   listContainersQuerySchema,
   orchestrationExecuteSchema,
   saveGraphLayoutSchema,
+  saveExecutionOrderSchema,
+  terminalClientMessageSchema,
+  type TerminalDebugSnapshot,
   updateGroupContainerSchema,
   updateGroupSchema,
   validateGraphSchema,
+  type TerminalServerMessage,
 } from "@dockforge/shared";
 import { prisma } from "@dockforge/db";
+import { WebSocketServer, type WebSocket } from "ws";
 import {
+  bulkAttachGroupContainers,
+  createGroupContainerMembership,
   dockerClient,
-  ensureContainerMembershipPayload,
   executeGroupAction,
   getDashboard,
   getGroupDetail,
@@ -26,10 +36,21 @@ import {
   listContainersWithGroups,
   listGroupRuns,
   listGroups,
+  saveGroupExecutionOrder,
   validateGroupGraph,
 } from "./services.js";
 
 const parseBody = <T>(schema: { parse: (input: unknown) => T }, input: unknown) => schema.parse(input);
+
+type TerminalSocketLike = {
+  send: (payload: string) => void;
+  close: () => void;
+};
+
+type TerminalDiagnosticsLogger = {
+  info: (payload: Record<string, unknown>, message: string) => void;
+  error: (payload: Record<string, unknown>, message: string) => void;
+};
 
 const toHttpError = (app: ReturnType<typeof Fastify>, error: unknown) => {
   const message = error instanceof Error ? error.message : "Unexpected error";
@@ -40,11 +61,152 @@ const toHttpError = (app: ReturnType<typeof Fastify>, error: unknown) => {
   return app.httpErrors.internalServerError(message);
 };
 
+const sendTerminalMessage = (socket: TerminalSocketLike, message: TerminalServerMessage) => {
+  socket.send(JSON.stringify(message));
+};
+
+const parseTerminalPayload = (raw: unknown) => {
+  const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : typeof raw === "string" ? raw : "";
+  return terminalClientMessageSchema.parse(JSON.parse(text));
+};
+
+const getTerminalDebugSnapshot = async (request: { params: { idOrName: string }; protocol?: string; headers: { host?: string } }) => {
+  const detail = await dockerClient.getContainerDetail(request.params.idOrName);
+  const protocol = request.protocol === "https" ? "wss" : "ws";
+  const host = request.headers.host ?? "localhost:4000";
+
+  const snapshot: TerminalDebugSnapshot = {
+    resolvedSocketUrl: `${protocol}://${host}/api/containers/${encodeURIComponent(request.params.idOrName)}/terminal/ws`,
+    containerIdOrName: request.params.idOrName,
+    containerName: detail.overview.name,
+    containerState: detail.overview.state,
+    connectable: detail.overview.state === "running",
+    terminalCommands: detail.terminalCommands,
+  };
+
+  return snapshot;
+};
+
+export const createTerminalSocketController = ({
+  idOrName,
+  socket,
+  logger,
+  connectionId,
+}: {
+  idOrName: string;
+  socket: TerminalSocketLike;
+  logger: TerminalDiagnosticsLogger;
+  connectionId: string;
+}) => {
+  let session: Awaited<ReturnType<typeof dockerClient.openContainerTerminal>> | null = null;
+  let firstMessageSeen = false;
+
+  const closeSession = () => {
+    session?.close();
+    session = null;
+  };
+
+  logger.info({ connectionId, idOrName }, "[terminal-debug] websocket handler entered");
+
+  const handleMessage = async (raw: unknown) => {
+    try {
+      if (!firstMessageSeen) {
+        firstMessageSeen = true;
+        logger.info({ connectionId, idOrName }, "[terminal-debug] first client message received");
+      }
+
+      const message = parseTerminalPayload(raw);
+      logger.info({ connectionId, idOrName, messageType: message.type }, "[terminal-debug] parsed terminal message");
+
+      if (message.type === "start") {
+        closeSession();
+        logger.info(
+          { connectionId, idOrName, shell: message.shell, cols: message.cols, rows: message.rows },
+          "[terminal-debug] terminal start requested",
+        );
+        session = await dockerClient.openContainerTerminal(
+          idOrName,
+          {
+            shell: message.shell,
+            cols: message.cols,
+            rows: message.rows,
+          },
+          {
+            onOutput: (data) => {
+              sendTerminalMessage(socket, { type: "output", data });
+            },
+            onExit: (exitCode) => {
+              session = null;
+              sendTerminalMessage(socket, { type: "exit", exitCode });
+            },
+            onError: (error) => {
+              sendTerminalMessage(socket, { type: "error", message: error.message });
+            },
+          },
+        );
+
+        const inspect = await dockerClient.inspectContainer(idOrName);
+        logger.info(
+          { connectionId, idOrName, containerName: canonicalizeContainerKey(inspect.Name ?? idOrName) },
+          "[terminal-debug] docker terminal open succeeded",
+        );
+        sendTerminalMessage(socket, {
+          type: "ready",
+          containerName: canonicalizeContainerKey(inspect.Name ?? idOrName),
+          shell: message.shell,
+        });
+        return;
+      }
+
+      if (!session) {
+        sendTerminalMessage(socket, { type: "error", message: "Terminal session is not connected" });
+        return;
+      }
+
+      if (message.type === "input") {
+        session.write(message.data);
+        return;
+      }
+
+      if (message.type === "resize") {
+        await session.resize(message.cols, message.rows);
+        return;
+      }
+
+      closeSession();
+      socket.close();
+    } catch (error) {
+      logger.error(
+        {
+          connectionId,
+          idOrName,
+          error: error instanceof Error ? error.message : "Unexpected terminal error",
+        },
+        "[terminal-debug] terminal message handling failed",
+      );
+      sendTerminalMessage(socket, {
+        type: "error",
+        message: error instanceof Error ? error.message : "Unexpected terminal error",
+      });
+    }
+  };
+
+  const handleClose = () => {
+    logger.info({ connectionId, idOrName }, "[terminal-debug] socket close handler invoked");
+    closeSession();
+  };
+
+  return { handleMessage, handleClose };
+};
+
 export const buildApp = () => {
   const app = Fastify({ logger: true });
+  const terminalWss = new WebSocketServer({ noServer: true });
 
   app.register(cors, {
     origin: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   });
   app.register(sensible);
 
@@ -155,6 +317,117 @@ export const buildApp = () => {
     const detail = await dockerClient.getContainerDetail((request.params as { idOrName: string }).idOrName);
     return detail.terminalCommands;
   });
+  app.get("/api/containers/:idOrName/terminal/debug", async (request) => {
+    try {
+      return await getTerminalDebugSnapshot({
+        params: request.params as { idOrName: string },
+        protocol: request.protocol,
+        headers: { host: request.headers.host },
+      });
+    } catch (error) {
+      throw toHttpError(app, error);
+    }
+  });
+  app.get("/api/containers/:idOrName/terminal/ws", async (request, reply) => {
+    app.log.info(
+      {
+        idOrName: (request.params as { idOrName: string }).idOrName,
+        connection: request.headers.connection,
+        upgrade: request.headers.upgrade,
+        secWebsocketKey: request.headers["sec-websocket-key"],
+        secWebsocketVersion: request.headers["sec-websocket-version"],
+        origin: request.headers.origin,
+        userAgent: request.headers["user-agent"],
+      },
+      "[terminal-debug] websocket fallback handler hit",
+    );
+    reply.code(426).send({
+      error: "WebSocket upgrade required",
+    });
+  });
+
+  const terminalPathPattern = /^\/api\/containers\/([^/]+)\/terminal\/ws$/;
+  const handleTerminalUpgrade = (request: import("node:http").IncomingMessage, socket: import("node:net").Socket, head: Buffer) => {
+    const requestUrl = request.url ? new URL(request.url, `http://${request.headers.host ?? "localhost"}`) : null;
+    const pathname = requestUrl?.pathname ?? "";
+    const match = terminalPathPattern.exec(pathname);
+
+    if (!match) {
+      return;
+    }
+
+    const idOrName = decodeURIComponent(match[1]);
+    const connectionId = randomUUID();
+    app.log.info(
+      {
+        connectionId,
+        idOrName,
+        connection: request.headers.connection,
+        upgrade: request.headers.upgrade,
+        secWebsocketKey: request.headers["sec-websocket-key"],
+        secWebsocketVersion: request.headers["sec-websocket-version"],
+        origin: request.headers.origin,
+      },
+      "[terminal-debug] raw upgrade handler matched terminal route",
+    );
+
+    terminalWss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
+      const controller = createTerminalSocketController({
+        idOrName,
+        socket: ws,
+        logger: {
+          info: (payload, message) => app.log.info(payload, message),
+          error: (payload, message) => app.log.error(payload, message),
+        },
+        connectionId,
+      });
+
+      app.log.info({ connectionId, idOrName }, "[terminal-debug] raw websocket upgrade completed");
+
+      ws.on("message", (message: Buffer | ArrayBuffer | Buffer[]) => {
+        const payload = Array.isArray(message) ? Buffer.concat(message) : Buffer.isBuffer(message) ? message : Buffer.from(message);
+        void controller.handleMessage(payload);
+      });
+      ws.on("close", (code: number, reason: Buffer) => {
+        app.log.info(
+          {
+            connectionId,
+            idOrName,
+            code,
+            reason: reason.toString("utf8"),
+          },
+          "[terminal-debug] socket closed",
+        );
+        controller.handleClose();
+      });
+      ws.on("error", (error: Error) => {
+        app.log.error(
+          {
+            connectionId,
+            idOrName,
+            error: error.message,
+          },
+          "[terminal-debug] socket error",
+        );
+        controller.handleClose();
+      });
+    });
+  };
+
+  app.server.on("upgrade", handleTerminalUpgrade);
+  app.addHook("onClose", async () => {
+    app.server.off("upgrade", handleTerminalUpgrade);
+    await new Promise<void>((resolve, reject) => {
+      terminalWss.close((error?: Error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  });
   app.post("/api/containers/:idOrName/start", async (request) => {
     await dockerClient.startContainer((request.params as { idOrName: string }).idOrName);
     return { ok: true };
@@ -207,20 +480,19 @@ export const buildApp = () => {
 
   app.post("/api/groups/:id/containers", async (request) => {
     const body = parseBody(addGroupContainerSchema, request.body);
-    const runtime = await ensureContainerMembershipPayload((request.params as { id: string }).id, body.containerKey);
-
-    return prisma.groupContainer.create({
-      data: {
-        groupId: (request.params as { id: string }).id,
-        containerKey: runtime.containerKey,
-        containerNameSnapshot: body.containerNameSnapshot || runtime.name,
-        lastResolvedDockerId: runtime.id,
-        aliasName: body.aliasName ?? null,
-        notes: body.notes ?? null,
-        includeInStartAll: body.includeInStartAll ?? true,
-        includeInStopAll: body.includeInStopAll ?? true,
-      },
+    return createGroupContainerMembership({
+      groupId: (request.params as { id: string }).id,
+      containerKey: body.containerKey,
+      containerNameSnapshot: body.containerNameSnapshot,
+      aliasName: body.aliasName,
+      notes: body.notes,
+      includeInStartAll: body.includeInStartAll,
+      includeInStopAll: body.includeInStopAll,
     });
+  });
+  app.post("/api/groups/:id/containers/bulk", async (request) => {
+    const body = parseBody(bulkAddGroupContainersSchema, request.body);
+    return bulkAttachGroupContainers((request.params as { id: string }).id, body.containerKeys);
   });
   app.patch("/api/groups/:id/containers/:groupContainerId", async (request) => {
     const body = parseBody(updateGroupContainerSchema, request.body);
@@ -327,6 +599,10 @@ export const buildApp = () => {
     );
 
     return getGroupDetail(groupId);
+  });
+  app.put("/api/groups/:id/execution-order", async (request) => {
+    const body = parseBody(saveExecutionOrderSchema, request.body);
+    return saveGroupExecutionOrder((request.params as { id: string }).id, body.stages);
   });
 
   app.get("/api/groups/:id/plan", async (request) => {

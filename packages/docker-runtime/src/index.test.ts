@@ -158,3 +158,133 @@ describe("DockerRuntimeClient log helpers", () => {
     expect(stream.destroy).toHaveBeenCalled();
   });
 });
+
+describe("DockerRuntimeClient terminal helpers", () => {
+  it("opens a tty exec session with the selected shell", async () => {
+    const stream = new EventEmitter() as EventEmitter & {
+      write: ReturnType<typeof vi.fn>;
+      destroy: ReturnType<typeof vi.fn>;
+      off: typeof EventEmitter.prototype.off;
+      on: typeof EventEmitter.prototype.on;
+    };
+    stream.write = vi.fn();
+    stream.destroy = vi.fn();
+    const execStart = vi.fn().mockResolvedValue(stream);
+    const execResize = vi.fn().mockResolvedValue(undefined);
+    const execInspect = vi.fn().mockResolvedValue({ ExitCode: 0 });
+    const execFactory = vi.fn().mockResolvedValue({
+      start: execStart,
+      resize: execResize,
+      inspect: execInspect,
+    });
+    const inspect = vi.fn().mockResolvedValue({
+      Id: "container-1",
+      Name: "/postgres",
+      State: { Status: "running" },
+    });
+    const client = new DockerRuntimeClient();
+
+    Object.assign(client as object, {
+      docker: {
+        getContainer: vi.fn().mockReturnValue({
+          inspect,
+          exec: execFactory,
+        }),
+      },
+    });
+
+    const onOutput = vi.fn();
+    const onExit = vi.fn();
+    const session = await client.openContainerTerminal(
+      "postgres",
+      { shell: "sh", cols: 120, rows: 40 },
+      { onOutput, onExit },
+    );
+
+    expect(execFactory).toHaveBeenCalledWith({
+      AttachStdin: true,
+      AttachStdout: true,
+      AttachStderr: true,
+      Cmd: ["sh"],
+      ConsoleSize: [40, 120],
+      Tty: true,
+    });
+    expect(execStart).toHaveBeenCalledWith({
+      hijack: true,
+      stdin: true,
+      Tty: true,
+    });
+
+    stream.emit("data", Buffer.from("echo hello\r\n"));
+    expect(onOutput).toHaveBeenCalledWith("echo hello\r\n");
+
+    session.write("pwd\n");
+    expect(stream.write).toHaveBeenCalledWith("pwd\n");
+
+    await session.resize(90, 20);
+    expect(execResize).toHaveBeenCalledWith({ h: 20, w: 90 });
+
+    stream.emit("end");
+    await Promise.resolve();
+    expect(onExit).toHaveBeenCalledWith(0);
+
+    session.close();
+    expect(stream.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects non-running containers", async () => {
+    const inspect = vi.fn().mockResolvedValue({
+      Id: "container-1",
+      State: { Status: "exited" },
+    });
+    const client = new DockerRuntimeClient();
+
+    Object.assign(client as object, {
+      docker: {
+        getContainer: vi.fn().mockReturnValue({
+          inspect,
+          exec: vi.fn(),
+        }),
+      },
+    });
+
+    await expect(
+      client.openContainerTerminal("postgres", { shell: "bash", cols: 80, rows: 24 }, { onOutput: vi.fn() }),
+    ).rejects.toThrow("Container postgres is not running");
+  });
+
+  it("closes the underlying terminal stream exactly once", async () => {
+    const stream = new EventEmitter() as EventEmitter & {
+      write: ReturnType<typeof vi.fn>;
+      destroy: ReturnType<typeof vi.fn>;
+      off: typeof EventEmitter.prototype.off;
+      on: typeof EventEmitter.prototype.on;
+    };
+    stream.write = vi.fn();
+    stream.destroy = vi.fn();
+    const client = new DockerRuntimeClient();
+
+    Object.assign(client as object, {
+      docker: {
+        getContainer: vi.fn().mockReturnValue({
+          inspect: vi.fn().mockResolvedValue({
+            Id: "container-1",
+            State: { Status: "running" },
+          }),
+          exec: vi.fn().mockResolvedValue({
+            start: vi.fn().mockResolvedValue(stream),
+            resize: vi.fn().mockResolvedValue(undefined),
+            inspect: vi.fn().mockResolvedValue({ ExitCode: null }),
+          }),
+        }),
+      },
+    });
+
+    const session = await client.openContainerTerminal("postgres", { shell: "sh", cols: 80, rows: 24 }, { onOutput: vi.fn() });
+
+    session.close();
+    session.close();
+
+    expect(stream.destroy).toHaveBeenCalledTimes(1);
+  });
+});

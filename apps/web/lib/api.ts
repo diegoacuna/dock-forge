@@ -6,6 +6,12 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhos
 
 export const buildApiUrl = (path: string) => `${API_BASE}${path}`;
 
+export const buildSocketUrl = (path: string) => {
+  const apiUrl = new URL(buildApiUrl(path));
+  apiUrl.protocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
+  return apiUrl.toString();
+};
+
 export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body != null && !headers.has("Content-Type")) {
@@ -39,7 +45,7 @@ export const useApiQuery = <T,>(key: unknown[], path: string, refetchInterval?: 
   });
 
 export const useApiMutation = <TBody, TResult>(options: {
-  method: "POST" | "PATCH" | "DELETE";
+  method: "POST" | "PATCH" | "PUT" | "DELETE";
   path: string | ((body: TBody) => string);
   invalidate?: unknown[][];
 }) => {

@@ -5,8 +5,9 @@ import type { ContainerDetail } from "@dockforge/shared";
 import { useApiQuery } from "../../../lib/api";
 import { formatTimestamp } from "../../../lib/utils";
 import { CopyButton, PageHeader, Panel } from "../../../components/ui";
+import { ContainerTerminalPanel } from "../../../components/container-terminal-panel";
 
-const tabs = ["Overview", "Environment", "Mounts / Volumes", "Networks", "Compose metadata", "Raw inspect", "Terminal helpers"] as const;
+const tabs = ["Overview", "Environment", "Mounts / Volumes", "Networks", "Compose metadata", "Raw inspect", "Terminal"] as const;
 
 export default function ContainerDetailPage({ params }: { params: Promise<{ idOrName: string }> }) {
   const resolvedParams = use(params);
@@ -85,20 +86,13 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ idOr
         </Panel>
       ) : null}
 
-      {tab === "Terminal helpers" && data ? (
-        <Panel className="space-y-3">
-          {data.terminalCommands.map((command) => (
-            <div key={command.command} className="rounded-2xl border border-slate-200 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="font-medium text-slate-950">{command.label}</p>
-                  <code className="text-sm text-slate-600">{command.command}</code>
-                </div>
-                <CopyButton text={command.command} />
-              </div>
-            </div>
-          ))}
-        </Panel>
+      {tab === "Terminal" && data && overview ? (
+        <ContainerTerminalPanel
+          containerIdOrName={resolvedParams.idOrName}
+          containerName={overview.name}
+          containerState={overview.state}
+          terminalCommands={data.terminalCommands}
+        />
       ) : null}
     </div>
   );

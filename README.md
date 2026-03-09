@@ -4,6 +4,8 @@ Craft your local Docker empire—graph dependencies, auto-start stacks, and debu
 
 DockForge is a local-only Docker orchestration dashboard for a single trusted user. Docker remains the source of truth for runtime state; DockForge persists groups, membership, dependency graphs, graph layout, and orchestration history in SQLite.
 
+Container detail pages include a browser-based terminal for ephemeral `sh` or `bash` sessions, alongside raw inspect data and copyable Docker helper commands.
+
 ## Architecture
 
 - `apps/web`: Next.js frontend with Tailwind, TanStack Query, and React Flow.

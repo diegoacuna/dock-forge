@@ -81,6 +81,74 @@ export const terminalCommandSchema = z.object({
   command: z.string(),
 });
 
+export const terminalShellSchema = z.enum(["sh", "bash"]);
+
+export const terminalStartMessageSchema = z.object({
+  type: z.literal("start"),
+  shell: terminalShellSchema,
+  cols: z.number().int().positive(),
+  rows: z.number().int().positive(),
+});
+
+export const terminalInputMessageSchema = z.object({
+  type: z.literal("input"),
+  data: z.string(),
+});
+
+export const terminalResizeMessageSchema = z.object({
+  type: z.literal("resize"),
+  cols: z.number().int().positive(),
+  rows: z.number().int().positive(),
+});
+
+export const terminalCloseMessageSchema = z.object({
+  type: z.literal("close"),
+});
+
+export const terminalClientMessageSchema = z.discriminatedUnion("type", [
+  terminalStartMessageSchema,
+  terminalInputMessageSchema,
+  terminalResizeMessageSchema,
+  terminalCloseMessageSchema,
+]);
+
+export const terminalReadyMessageSchema = z.object({
+  type: z.literal("ready"),
+  containerName: z.string(),
+  shell: terminalShellSchema,
+});
+
+export const terminalOutputMessageSchema = z.object({
+  type: z.literal("output"),
+  data: z.string(),
+});
+
+export const terminalExitMessageSchema = z.object({
+  type: z.literal("exit"),
+  exitCode: z.number().int().nullable(),
+});
+
+export const terminalErrorMessageSchema = z.object({
+  type: z.literal("error"),
+  message: z.string(),
+});
+
+export const terminalServerMessageSchema = z.discriminatedUnion("type", [
+  terminalReadyMessageSchema,
+  terminalOutputMessageSchema,
+  terminalExitMessageSchema,
+  terminalErrorMessageSchema,
+]);
+
+export const terminalDebugSnapshotSchema = z.object({
+  resolvedSocketUrl: z.string(),
+  containerIdOrName: z.string(),
+  containerName: z.string(),
+  containerState: containerStateSchema,
+  connectable: z.boolean(),
+  terminalCommands: z.array(terminalCommandSchema),
+});
+
 export const containerLogStreamSchema = z.enum(["stdout", "stderr"]);
 
 export const containerLogEntrySchema = z.object({
@@ -164,6 +232,7 @@ export const groupContainerSchema = z.object({
   groupId: z.string(),
   containerKey: z.string(),
   containerNameSnapshot: z.string(),
+  folderLabelSnapshot: z.string(),
   lastResolvedDockerId: z.string().nullable(),
   aliasName: z.string().nullable(),
   notes: z.string().nullable(),
@@ -195,11 +264,24 @@ export const graphLayoutSchema = z.object({
   positionY: z.number(),
 });
 
+export const groupExecutionFolderSchema = z.object({
+  folderLabel: z.string(),
+  stage: z.number().int().nonnegative(),
+  containerCount: z.number().int().nonnegative(),
+});
+
+export const groupExecutionStageSchema = z.object({
+  stage: z.number().int().nonnegative(),
+  folders: z.array(groupExecutionFolderSchema),
+});
+
 export const groupDetailSchema = groupSchema.extend({
   description: z.string().nullable(),
   containers: z.array(groupContainerSchema),
   edges: z.array(dependencyEdgeSchema),
   layouts: z.array(graphLayoutSchema),
+  executionFolders: z.array(groupExecutionFolderSchema),
+  executionStages: z.array(groupExecutionStageSchema),
 });
 
 export const orchestrationPlanLayerSchema = z.object({
@@ -270,6 +352,15 @@ export const addGroupContainerSchema = z.object({
   includeInStopAll: z.boolean().optional(),
 });
 
+export const bulkAddGroupContainersSchema = z.object({
+  containerKeys: z.array(z.string().min(1)).min(1),
+});
+
+export const bulkAddGroupContainersResultSchema = z.object({
+  added: z.array(groupContainerSchema),
+  skipped: z.array(z.string()),
+});
+
 export const updateGroupContainerSchema = z.object({
   aliasName: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
@@ -305,6 +396,10 @@ export const saveGraphLayoutSchema = z.object({
   ),
 });
 
+export const saveExecutionOrderSchema = z.object({
+  stages: z.array(z.array(z.string().min(1)).min(1)),
+});
+
 export const orchestrationExecuteSchema = z.object({
   dryRun: z.boolean().optional(),
   targetGroupContainerId: z.string().nullable().optional(),
@@ -324,13 +419,20 @@ export const containerLogsQuerySchema = z.object({
 export type ContainerSummary = z.infer<typeof containerSummarySchema>;
 export type ContainerOverview = z.infer<typeof containerOverviewSchema>;
 export type ContainerDetail = z.infer<typeof containerDetailSchema>;
+export type TerminalCommand = z.infer<typeof terminalCommandSchema>;
 export type ContainerLogEntry = z.infer<typeof containerLogEntrySchema>;
 export type ContainerLogsResponse = z.infer<typeof containerLogsResponseSchema>;
+export type TerminalShell = z.infer<typeof terminalShellSchema>;
+export type TerminalClientMessage = z.infer<typeof terminalClientMessageSchema>;
+export type TerminalServerMessage = z.infer<typeof terminalServerMessageSchema>;
+export type TerminalDebugSnapshot = z.infer<typeof terminalDebugSnapshotSchema>;
 export type HealthStatus = z.infer<typeof healthStatusSchema>;
 export type ContainerState = z.infer<typeof containerStateSchema>;
 export type Group = z.infer<typeof groupSchema>;
 export type GroupContainer = z.infer<typeof groupContainerSchema>;
 export type DependencyEdge = z.infer<typeof dependencyEdgeSchema>;
+export type GroupExecutionFolder = z.infer<typeof groupExecutionFolderSchema>;
+export type GroupExecutionStage = z.infer<typeof groupExecutionStageSchema>;
 export type GroupDetail = z.infer<typeof groupDetailSchema>;
 export type GroupRun = z.infer<typeof groupRunSchema>;
 export type GroupRunStep = z.infer<typeof groupRunStepSchema>;
@@ -340,8 +442,20 @@ export type VolumeSummary = z.infer<typeof volumeSummarySchema>;
 export type VolumeDetail = z.infer<typeof volumeDetailSchema>;
 export type NetworkSummary = z.infer<typeof networkSummarySchema>;
 export type NetworkDetail = z.infer<typeof networkDetailSchema>;
+export type BulkAddGroupContainersResult = z.infer<typeof bulkAddGroupContainersResultSchema>;
 
 export const canonicalizeContainerKey = (name: string) => name.replace(/^\//, "").trim();
+
+export const getFolderLabel = (workingDir: string | null | undefined) => {
+  if (!workingDir) {
+    return "Standalone";
+  }
+
+  const normalized = workingDir.replace(/[\\/]+$/, "");
+  const segments = normalized.split(/[\\/]/).filter(Boolean);
+
+  return segments.at(-1) || "Standalone";
+};
 
 export const formatDate = (value: Date | string | null | undefined) =>
   value ? new Date(value).toISOString() : null;
