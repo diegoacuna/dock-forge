@@ -52,6 +52,7 @@ Default local values:
 - `API_PORT=4000`
 - `WEB_HOST=0.0.0.0`
 - `WEB_PORT=3000`
+- `SITE_URL=http://localhost:3000`
 - `NEXT_PUBLIC_API_BASE_URL=http://localhost:4000/api`
 - `DOCKER_SOCKET_PATH=/var/run/docker.sock`
 - `DATABASE_URL` omitted, which falls back to `packages/db/dev.db`
@@ -92,7 +93,7 @@ Use this flow on a fresh clone when you want to run the built app locally:
 7. Open `http://localhost:3000`.
 
 `pnpm build` and `pnpm start` both load the root `.env`.
-That matters for browser-facing values such as `NEXT_PUBLIC_API_BASE_URL`, which are embedded into the Next.js build output.
+That matters for browser-facing values such as `NEXT_PUBLIC_API_BASE_URL`, which are embedded into the Next.js build output, and for metadata values such as `SITE_URL`, which DockForge uses for canonical URLs and Open Graph image references.
 `pnpm start` starts the compiled API on port `4000` and starts the built Next.js server on port `3000`.
 
 ## Long-Lived Local Production
@@ -159,7 +160,7 @@ nohup pnpm start > .logs/dockforge.log 2>&1 & echo $! > .dockforge.pid
 To use a hostname such as `forge.mylocal.dev` on your machine without a reverse proxy:
 
 1. Add `127.0.0.1 forge.mylocal.dev` to `/etc/hosts`.
-2. Set `NEXT_PUBLIC_API_BASE_URL=http://forge.mylocal.dev:4000/api` in `.env`.
+2. Set `SITE_URL=http://forge.mylocal.dev:3000` and `NEXT_PUBLIC_API_BASE_URL=http://forge.mylocal.dev:4000/api` in `.env`.
 3. Start DockForge with `pnpm dev` or `pnpm start`.
 4. Open `http://forge.mylocal.dev:3000`.
 
