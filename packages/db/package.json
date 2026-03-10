@@ -14,7 +14,7 @@
     "test": "vitest run --passWithNoTests",
     "lint": "tsc -p tsconfig.json --noEmit",
     "db:generate": "PRISMA_GENERATE_SKIP_AUTOINSTALL=1 prisma generate --schema prisma/schema.prisma",
-    "db:migrate": "tsx scripts/migrate.ts"
+    "db:migrate": "node --import tsx scripts/migrate.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.2"

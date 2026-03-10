@@ -18,25 +18,88 @@ if (!databaseUrl.startsWith("file:")) {
 const rawDbTarget = databaseUrl.replace(/^file:/, "");
 const dbPath = path.isAbsolute(rawDbTarget) ? rawDbTarget : path.resolve(packageRoot, rawDbTarget);
 
-const runSql = (sql: string) => {
-  execFileSync("sqlite3", [dbPath, sql], {
-    cwd: packageRoot,
-    stdio: "inherit",
-  });
+type SqlExecutor = {
+  run: (sql: string) => void;
+  listAppliedMigrations: () => string[];
 };
 
-runSql(`
+const createCliExecutor = (): SqlExecutor => ({
+  run: (sql) => {
+    try {
+      execFileSync("sqlite3", [dbPath, sql], {
+        cwd: packageRoot,
+        stdio: "inherit",
+      });
+    } catch (error) {
+      if (error instanceof Error && "code" in error && (error as Error & { code?: string }).code === "ENOENT") {
+        throw new Error(
+          "SQLite migrations require either Node's built-in sqlite module or the sqlite3 CLI. Upgrade to Node 22+ or install sqlite3.",
+        );
+      }
+
+      throw error;
+    }
+  },
+  listAppliedMigrations: () => {
+    try {
+      const appliedRows = execFileSync("sqlite3", [dbPath, "SELECT id FROM _dockforge_migrations;"], {
+        cwd: packageRoot,
+        encoding: "utf8",
+      });
+
+      return appliedRows
+        .split("\n")
+        .map((value) => value.trim())
+        .filter(Boolean);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && (error as Error & { code?: string }).code === "ENOENT") {
+        throw new Error(
+          "SQLite migrations require either Node's built-in sqlite module or the sqlite3 CLI. Upgrade to Node 22+ or install sqlite3.",
+        );
+      }
+
+      throw error;
+    }
+  },
+});
+
+const createExecutor = async (): Promise<SqlExecutor> => {
+  try {
+    const sqlite = await import("node:sqlite");
+    const database = new sqlite.DatabaseSync(dbPath);
+
+    return {
+      run: (sql) => {
+        database.exec(sql);
+      },
+      listAppliedMigrations: () => {
+        const statement = database.prepare("SELECT id FROM _dockforge_migrations;");
+        return statement.all().map((row) => String((row as { id: string }).id));
+      },
+    };
+  } catch (error) {
+    const isUnsupportedNodeSqlite =
+      error instanceof Error &&
+      ("code" in error ? (error as Error & { code?: string }).code === "ERR_UNKNOWN_BUILTIN_MODULE" : false);
+
+    if (!isUnsupportedNodeSqlite) {
+      throw error;
+    }
+
+    return createCliExecutor();
+  }
+};
+
+const executor = await createExecutor();
+
+executor.run(`
 CREATE TABLE IF NOT EXISTS _dockforge_migrations (
   id TEXT PRIMARY KEY,
   applied_at TEXT NOT NULL
 );
 `);
 
-const appliedRows = execFileSync("sqlite3", [dbPath, "SELECT id FROM _dockforge_migrations;"], {
-  cwd: packageRoot,
-  encoding: "utf8",
-});
-const applied = new Set(appliedRows.split("\n").map((value) => value.trim()).filter(Boolean));
+const applied = new Set(executor.listAppliedMigrations());
 
 const migrationDirs = readdirSync(migrationsRoot, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
@@ -54,7 +117,7 @@ for (const migrationId of migrationDirs) {
   }
 
   const sql = readFileSync(migrationFile, "utf8");
-  runSql(sql);
-  runSql(`INSERT INTO _dockforge_migrations (id, applied_at) VALUES ('${migrationId}', datetime('now'));`);
+  executor.run(sql);
+  executor.run(`INSERT INTO _dockforge_migrations (id, applied_at) VALUES ('${migrationId}', datetime('now'));`);
   process.stdout.write(`Applied migration ${migrationId}\n`);
 }

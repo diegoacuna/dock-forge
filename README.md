@@ -30,7 +30,7 @@ Docker remains the source of truth for runtime state; DockForge persists groups,
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 20+ (Node.js 22+ recommended for self-contained SQLite migrations)
 - pnpm 8+
 - Docker Desktop or a local Docker Engine reachable from the current user
 - Access to the Docker socket or daemon configured through `DOCKER_HOST` or `DOCKER_SOCKET_PATH`
@@ -178,6 +178,8 @@ If you later add Caddy, nginx, or another reverse proxy, you can keep these bind
 ## Database note
 
 DockForge keeps a Prisma schema and generated Prisma client, but this environment hit a Prisma SQLite schema-engine issue when applying migrations. The repo therefore uses a checked-in SQL migration plus a small TypeScript migrator to create the SQLite schema reproducibly while preserving Prisma for the data model and runtime client.
+
+On Node.js 22+, the migrator uses Node's built-in SQLite support and does not require the `sqlite3` shell package. On older Node versions, install the `sqlite3` CLI before running `pnpm db:migrate`.
 
 ## Upgrade Flow
 
