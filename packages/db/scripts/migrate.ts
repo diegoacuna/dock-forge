@@ -7,6 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const packageRoot = path.resolve(__dirname, "..");
 const migrationsRoot = path.join(packageRoot, "prisma", "migrations");
+const prismaRoot = path.join(packageRoot, "prisma");
 const defaultDbPath = path.join(packageRoot, "dev.db");
 
 const databaseUrl = process.env.DATABASE_URL ?? `file:${defaultDbPath}`;
@@ -16,7 +17,7 @@ if (!databaseUrl.startsWith("file:")) {
 }
 
 const rawDbTarget = databaseUrl.replace(/^file:/, "");
-const dbPath = path.isAbsolute(rawDbTarget) ? rawDbTarget : path.resolve(packageRoot, rawDbTarget);
+const dbPath = path.isAbsolute(rawDbTarget) ? rawDbTarget : path.resolve(prismaRoot, rawDbTarget);
 
 type SqlExecutor = {
   run: (sql: string) => void;

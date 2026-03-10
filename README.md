@@ -43,6 +43,8 @@ DockForge is not the Docker host. It connects to your existing local Docker Engi
 2. Adjust values only if your local ports, Docker connection, or SQLite location differ from the defaults.
 3. On first launch, DockForge opens an install page and stores the chosen Docker connection mode in the app database. Environment values remain the fallback before install is completed.
 
+If you want a guided setup instead of handling each step manually, run `./install.sh` from the repo root. It checks prerequisites, writes `.env`, installs dependencies, applies migrations, completes the first-run install state, and can offer a `systemd` service on Ubuntu.
+
 Default local values:
 
 - `API_HOST=0.0.0.0`
@@ -51,9 +53,10 @@ Default local values:
 - `WEB_PORT=3000`
 - `NEXT_PUBLIC_API_BASE_URL=http://localhost:4000/api`
 - `DOCKER_SOCKET_PATH=/var/run/docker.sock`
-- `DATABASE_URL=file:./packages/db/dev.db`
+- `DATABASE_URL` omitted, which falls back to `packages/db/dev.db`
 
 `DATABASE_URL` is optional. If you omit it, DockForge falls back to `packages/db/dev.db`.
+For production, prefer an absolute SQLite path such as `file:/data/code/dock-forge/packages/db/dev.db`.
 `DOCKER_HOST` and `DOCKER_SOCKET_PATH` are also optional after first-run setup, but they still provide the initial fallback values used before install completes.
 
 ## Development
@@ -182,6 +185,7 @@ If you later add Caddy, nginx, or another reverse proxy, you can keep these bind
 DockForge keeps a Prisma schema and generated Prisma client, but this environment hit a Prisma SQLite schema-engine issue when applying migrations. The repo therefore uses a checked-in SQL migration plus a small TypeScript migrator to create the SQLite schema reproducibly while preserving Prisma for the data model and runtime client.
 
 On Node.js 22+, the migrator uses Node's built-in SQLite support and does not require the `sqlite3` shell package. On older Node versions, install the `sqlite3` CLI before running `pnpm db:migrate`.
+When `DATABASE_URL` uses a relative SQLite path, Prisma resolves it relative to `packages/db/prisma/schema.prisma`. For production, use an absolute path to avoid ambiguity.
 
 ## Upgrade Flow
 
