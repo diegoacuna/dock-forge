@@ -87,7 +87,9 @@ Use this flow on a fresh clone when you want to run the built app locally:
 6. Start the production servers with `pnpm start`.
 7. Open `http://localhost:3000`.
 
-`pnpm start` loads the root `.env`, starts the compiled API on port `4000`, and starts the built Next.js server on port `3000`.
+`pnpm build` and `pnpm start` both load the root `.env`.
+That matters for browser-facing values such as `NEXT_PUBLIC_API_BASE_URL`, which are embedded into the Next.js build output.
+`pnpm start` starts the compiled API on port `4000` and starts the built Next.js server on port `3000`.
 
 ## Long-Lived Local Production
 

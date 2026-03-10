@@ -5,7 +5,7 @@
   "packageManager": "pnpm@8.7.4",
   "scripts": {
     "dev": "sh -ac 'if [ -f .env ]; then set -a; . ./.env; set +a; fi; pnpm --parallel --filter @dockforge/api --filter @dockforge/web dev'",
-    "build": "pnpm -r build",
+    "build": "sh -ac 'if [ -f .env ]; then set -a; . ./.env; set +a; fi; pnpm -r build'",
     "start": "pnpm start:prod",
     "start:prod": "sh -ac 'if [ -f .env ]; then set -a; . ./.env; set +a; fi; concurrently -k -n api,web -c blue,green \"pnpm --filter @dockforge/api start\" \"pnpm --filter @dockforge/web start\"'",
     "typecheck": "pnpm -r typecheck",
