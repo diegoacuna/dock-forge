@@ -1,6 +1,7 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { ContainerDetail } from "@dockforge/shared";
 import { useApiQuery } from "../../../lib/api";
 import { formatTimestamp } from "../../../lib/utils";
@@ -11,8 +12,16 @@ const tabs = ["Overview", "Environment", "Mounts / Volumes", "Networks", "Compos
 
 export default function ContainerDetailPage({ params }: { params: Promise<{ idOrName: string }> }) {
   const resolvedParams = use(params);
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
   const { data } = useApiQuery<ContainerDetail>(["container", resolvedParams.idOrName], `/containers/${resolvedParams.idOrName}`, 8_000);
+  const requestedTab = searchParams.get("tab");
+
+  useEffect(() => {
+    if (requestedTab && tabs.includes(requestedTab as (typeof tabs)[number])) {
+      setTab(requestedTab as (typeof tabs)[number]);
+    }
+  }, [requestedTab]);
 
   const overview = data?.overview;
 

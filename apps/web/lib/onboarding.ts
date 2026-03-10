@@ -58,6 +58,24 @@ export const dashboardOnboardingSteps: DashboardOnboardingStep[] = [
 export const shouldShowDashboardOnboarding = (totalGroups: number, dismissed: boolean) =>
   totalGroups === 0 && !dismissed;
 
+export const shouldShowContainersOnboarding = ({
+  runtimeStatus,
+  totalContainers,
+  seen,
+}: {
+  runtimeStatus: "connected" | "unavailable";
+  totalContainers: number;
+  seen: boolean;
+}) => runtimeStatus === "connected" && totalContainers > 0 && !seen;
+
+export const shouldShowGroupsOnboarding = ({
+  totalGroups,
+  seen,
+}: {
+  totalGroups: number;
+  seen: boolean;
+}) => totalGroups > 0 && !seen;
+
 export const getCreateGroupHref = (fromOnboarding: boolean) =>
   fromOnboarding ? "/groups/new?from=onboarding" : "/groups/new";
 

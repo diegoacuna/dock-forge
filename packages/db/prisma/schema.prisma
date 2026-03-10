@@ -23,6 +23,12 @@ model Group {
   executionFolders GroupExecutionFolder[]
 }
 
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
 model GroupContainer {
   id                  String             @id @default(cuid())
   groupId             String

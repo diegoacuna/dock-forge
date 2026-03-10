@@ -5,8 +5,11 @@ import {
   canonicalizeContainerKey,
   formatDate,
   type BulkAddGroupContainersResult,
+  type ContainersPageData,
+  type ContainersRuntime,
   type ContainerSummary,
   type Group,
+  type GroupsPageData,
   type GroupExecutionFolder,
   type GroupExecutionStage,
   type GroupContainer as GroupContainerDto,
@@ -34,6 +37,127 @@ const includeGroup = {
 } as const;
 
 export const dockerClient = new DockerRuntimeClient();
+const CONTAINERS_TOUR_SEEN_KEY = "containersTourSeen";
+const GROUPS_TOUR_SEEN_KEY = "groupsTourSeen";
+const CONTAINERS_TOUR_PERSISTENCE_UNAVAILABLE_CODE = "CONTAINERS_TOUR_PERSISTENCE_UNAVAILABLE";
+const GROUPS_TOUR_PERSISTENCE_UNAVAILABLE_CODE = "GROUPS_TOUR_PERSISTENCE_UNAVAILABLE";
+
+const isMissingAppSettingTableError = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  (error as { code?: string }).code === "P2021";
+
+const createContainersTourPersistenceUnavailableError = () => {
+  const error = new Error("Containers tour persistence is unavailable until migrations are applied. Run `pnpm db:migrate`.");
+  Object.assign(error, { code: CONTAINERS_TOUR_PERSISTENCE_UNAVAILABLE_CODE });
+  return error;
+};
+
+const createGroupsTourPersistenceUnavailableError = () => {
+  const error = new Error("Groups tour persistence is unavailable until migrations are applied. Run `pnpm db:migrate`.");
+  Object.assign(error, { code: GROUPS_TOUR_PERSISTENCE_UNAVAILABLE_CODE });
+  return error;
+};
+
+const readBooleanAppSetting = async (key: string) => {
+  try {
+    const setting = await prisma.appSetting.findUnique({
+      where: { key },
+    });
+
+    return {
+      seen: setting?.value === "true",
+      persistenceAvailable: true,
+    };
+  } catch (error) {
+    if (isMissingAppSettingTableError(error)) {
+      return {
+        seen: false,
+        persistenceAvailable: false,
+      };
+    }
+
+    throw error;
+  }
+};
+
+const writeBooleanAppSetting = async ({
+  key,
+  value,
+  onPersistenceUnavailable,
+}: {
+  key: string;
+  value: boolean;
+  onPersistenceUnavailable: () => Error;
+}) => {
+  try {
+    await prisma.appSetting.upsert({
+      where: { key },
+      update: { value: String(value) },
+      create: {
+        key,
+        value: String(value),
+      },
+    });
+  } catch (error) {
+    if (isMissingAppSettingTableError(error)) {
+      throw onPersistenceUnavailable();
+    }
+
+    throw error;
+  }
+};
+
+const classifyDockerRuntimeError = (error: unknown): ContainersRuntime => {
+  const message = error instanceof Error ? error.message : "Unable to connect to Docker.";
+  const lower = message.toLowerCase();
+  const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: string }).code ?? "") : "";
+
+  if (code === "ENOENT" || lower.includes("enoent") || lower.includes("no such file") || lower.includes("docker.sock")) {
+    return {
+      status: "unavailable",
+      reason: "socket_missing",
+      message,
+    };
+  }
+
+  if (
+    code === "ECONNREFUSED" ||
+    code === "EACCES" ||
+    lower.includes("connect econnrefused") ||
+    lower.includes("permission denied") ||
+    lower.includes("socket hang up")
+  ) {
+    return {
+      status: "unavailable",
+      reason: "connection_failed",
+      message,
+    };
+  }
+
+  return {
+    status: "unavailable",
+    reason: "docker_unavailable",
+    message,
+  };
+};
+
+const readContainersTourState = async () => {
+  const setting = await readBooleanAppSetting(CONTAINERS_TOUR_SEEN_KEY);
+  return {
+    containersTourSeen: setting.seen,
+    persistenceAvailable: setting.persistenceAvailable,
+  };
+};
+
+const readGroupsTourState = async () => {
+  const setting = await readBooleanAppSetting(GROUPS_TOUR_SEEN_KEY);
+  return {
+    groupsTourSeen: setting.seen,
+    persistenceAvailable: setting.persistenceAvailable,
+  };
+};
 
 const mapGroupContainer = (
   container: {
@@ -424,6 +548,65 @@ export const listContainersWithGroups = async (filters: {
 
       return true;
     });
+};
+
+export const getContainersPageData = async (): Promise<ContainersPageData> => {
+  const [containersResult, containersTourState] = await Promise.allSettled([listContainersWithGroups({}), readContainersTourState()]);
+  const onboardingState =
+    containersTourState.status === "fulfilled"
+      ? containersTourState.value
+      : { containersTourSeen: false, persistenceAvailable: false };
+
+  if (containersResult.status === "fulfilled") {
+    return {
+      containers: containersResult.value,
+      runtime: {
+        status: "connected",
+        reason: "unknown",
+        message: null,
+      },
+      onboarding: onboardingState,
+    };
+  }
+
+  return {
+    containers: [],
+    runtime: classifyDockerRuntimeError(containersResult.reason),
+    onboarding: onboardingState,
+  };
+};
+
+export const setContainersTourSeen = async (containersTourSeen: boolean) => {
+  await writeBooleanAppSetting({
+    key: CONTAINERS_TOUR_SEEN_KEY,
+    value: containersTourSeen,
+    onPersistenceUnavailable: createContainersTourPersistenceUnavailableError,
+  });
+
+  return {
+    containersTourSeen,
+  };
+};
+
+export const getGroupsPageData = async (): Promise<GroupsPageData> => {
+  const [groups, groupsTourState] = await Promise.all([listGroups(), readGroupsTourState()]);
+
+  return {
+    groups,
+    onboarding: groupsTourState,
+  };
+};
+
+export const setGroupsTourSeen = async (groupsTourSeen: boolean) => {
+  await writeBooleanAppSetting({
+    key: GROUPS_TOUR_SEEN_KEY,
+    value: groupsTourSeen,
+    onPersistenceUnavailable: createGroupsTourPersistenceUnavailableError,
+  });
+
+  return {
+    groupsTourSeen,
+  };
 };
 
 export const getDashboard = async () => {

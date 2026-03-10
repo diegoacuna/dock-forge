@@ -333,6 +333,44 @@ export const dashboardSchema = z.object({
   groups: z.array(groupSchema),
 });
 
+export const containersRuntimeStatusSchema = z.enum(["connected", "unavailable"]);
+export const containersRuntimeReasonSchema = z.enum(["docker_unavailable", "socket_missing", "connection_failed", "unknown"]);
+
+export const containersRuntimeSchema = z.object({
+  status: containersRuntimeStatusSchema,
+  reason: containersRuntimeReasonSchema,
+  message: z.string().nullable(),
+});
+
+export const containersOnboardingSchema = z.object({
+  containersTourSeen: z.boolean(),
+  persistenceAvailable: z.boolean(),
+});
+
+export const containersPageDataSchema = z.object({
+  containers: z.array(containerSummarySchema),
+  runtime: containersRuntimeSchema,
+  onboarding: containersOnboardingSchema,
+});
+
+export const containersTourUpdateSchema = z.object({
+  containersTourSeen: z.boolean(),
+});
+
+export const groupsOnboardingSchema = z.object({
+  groupsTourSeen: z.boolean(),
+  persistenceAvailable: z.boolean(),
+});
+
+export const groupsPageDataSchema = z.object({
+  groups: z.array(groupSchema),
+  onboarding: groupsOnboardingSchema,
+});
+
+export const groupsTourUpdateSchema = z.object({
+  groupsTourSeen: z.boolean(),
+});
+
 export const createGroupSchema = z.object({
   name: z.string().min(1),
   slug: z.string().min(1),
@@ -438,6 +476,11 @@ export type GroupRun = z.infer<typeof groupRunSchema>;
 export type GroupRunStep = z.infer<typeof groupRunStepSchema>;
 export type OrchestrationPlan = z.infer<typeof orchestrationPlanSchema>;
 export type DashboardData = z.infer<typeof dashboardSchema>;
+export type ContainersRuntime = z.infer<typeof containersRuntimeSchema>;
+export type ContainersOnboarding = z.infer<typeof containersOnboardingSchema>;
+export type ContainersPageData = z.infer<typeof containersPageDataSchema>;
+export type GroupsOnboarding = z.infer<typeof groupsOnboardingSchema>;
+export type GroupsPageData = z.infer<typeof groupsPageDataSchema>;
 export type VolumeSummary = z.infer<typeof volumeSummarySchema>;
 export type VolumeDetail = z.infer<typeof volumeDetailSchema>;
 export type NetworkSummary = z.infer<typeof networkSummarySchema>;

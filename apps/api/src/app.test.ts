@@ -29,15 +29,26 @@ vi.mock("./services.js", () => ({
   },
   ensureContainerMembershipPayload: vi.fn(),
   executeGroupAction: vi.fn(),
+  getContainersPageData: vi.fn().mockResolvedValue({
+    containers: [],
+    runtime: { status: "connected", reason: "unknown", message: null },
+    onboarding: { containersTourSeen: false, persistenceAvailable: true },
+  }),
   getDashboard: vi.fn(),
   getGroupDetail: vi.fn(),
   getGroupPlan: vi.fn(),
+  getGroupsPageData: vi.fn().mockResolvedValue({
+    groups: [],
+    onboarding: { groupsTourSeen: false, persistenceAvailable: true },
+  }),
   getRunDetail: vi.fn(),
   listActivity: vi.fn(),
   listContainersWithGroups: vi.fn().mockResolvedValue([]),
   listGroupRuns: vi.fn(),
   listGroups: vi.fn().mockResolvedValue([]),
   saveGroupExecutionOrder: vi.fn(),
+  setContainersTourSeen: vi.fn(async (value: boolean) => ({ containersTourSeen: value })),
+  setGroupsTourSeen: vi.fn(async (value: boolean) => ({ groupsTourSeen: value })),
   validateGroupGraph: vi.fn(),
 }));
 
@@ -112,6 +123,211 @@ describe("container log routes", () => {
       connectable: true,
       terminalCommands: [{ label: "Shell (sh)", command: "docker exec -it postgres sh" }],
     });
+
+    await app.close();
+  });
+
+  it("returns containers page data from the dedicated endpoint", async () => {
+    const services = await import("./services.js");
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+
+    vi.mocked(services.getContainersPageData).mockResolvedValue({
+      containers: [
+        {
+          id: "c1",
+          containerKey: "api",
+          name: "api",
+          image: "nginx:latest",
+          imageId: null,
+          state: "running",
+          status: "Up 1 minute",
+          health: "healthy",
+          createdAt: null,
+          ports: [],
+          compose: {
+            project: null,
+            service: null,
+            workingDir: null,
+            configFiles: [],
+            rawLabels: {},
+          },
+          groupIds: [],
+          groupNames: [],
+        },
+      ],
+      runtime: {
+        status: "connected",
+        reason: "unknown",
+        message: null,
+      },
+      onboarding: {
+        containersTourSeen: true,
+        persistenceAvailable: true,
+      },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/containers/page-data",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      containers: [
+        expect.objectContaining({
+          id: "c1",
+          name: "api",
+        }),
+      ],
+      runtime: {
+        status: "connected",
+        reason: "unknown",
+        message: null,
+      },
+      onboarding: {
+        containersTourSeen: true,
+        persistenceAvailable: true,
+      },
+    });
+
+    await app.close();
+  });
+
+  it("persists containers onboarding state", async () => {
+    const services = await import("./services.js");
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/onboarding/containers-tour",
+      payload: { containersTourSeen: true },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(services.setContainersTourSeen).toHaveBeenCalledWith(true);
+    expect(response.json()).toEqual({ containersTourSeen: true });
+
+    await app.close();
+  });
+
+  it("returns a conflict when containers onboarding persistence is unavailable", async () => {
+    const services = await import("./services.js");
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+
+    vi.mocked(services.setContainersTourSeen).mockRejectedValueOnce(
+      Object.assign(new Error("Containers tour persistence is unavailable until migrations are applied. Run `pnpm db:migrate`."), {
+        code: "CONTAINERS_TOUR_PERSISTENCE_UNAVAILABLE",
+      }),
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/onboarding/containers-tour",
+      payload: { containersTourSeen: true },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("pnpm db:migrate"),
+      }),
+    );
+
+    await app.close();
+  });
+
+  it("returns groups page data from the dedicated endpoint", async () => {
+    const services = await import("./services.js");
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+
+    vi.mocked(services.getGroupsPageData).mockResolvedValue({
+      groups: [
+        {
+          id: "group-1",
+          name: "Platform",
+          slug: "platform",
+          description: null,
+          color: null,
+          memberCount: 2,
+          dependencyCount: 1,
+          lastRunStatus: null,
+          createdAt: "2025-01-01T00:00:00.000Z",
+          updatedAt: "2025-01-02T00:00:00.000Z",
+        },
+      ],
+      onboarding: {
+        groupsTourSeen: true,
+        persistenceAvailable: true,
+      },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/groups/page-data",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      groups: [
+        expect.objectContaining({
+          id: "group-1",
+          name: "Platform",
+        }),
+      ],
+      onboarding: {
+        groupsTourSeen: true,
+        persistenceAvailable: true,
+      },
+    });
+
+    await app.close();
+  });
+
+  it("persists groups onboarding state", async () => {
+    const services = await import("./services.js");
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/onboarding/groups-tour",
+      payload: { groupsTourSeen: true },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(services.setGroupsTourSeen).toHaveBeenCalledWith(true);
+    expect(response.json()).toEqual({ groupsTourSeen: true });
+
+    await app.close();
+  });
+
+  it("returns a conflict when groups onboarding persistence is unavailable", async () => {
+    const services = await import("./services.js");
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+
+    vi.mocked(services.setGroupsTourSeen).mockRejectedValueOnce(
+      Object.assign(new Error("Groups tour persistence is unavailable until migrations are applied. Run `pnpm db:migrate`."), {
+        code: "GROUPS_TOUR_PERSISTENCE_UNAVAILABLE",
+      }),
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/onboarding/groups-tour",
+      payload: { groupsTourSeen: true },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("pnpm db:migrate"),
+      }),
+    );
 
     await app.close();
   });

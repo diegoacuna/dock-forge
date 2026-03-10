@@ -8,8 +8,10 @@ import {
   containerLogsQuerySchema,
   addGroupContainerSchema,
   bulkAddGroupContainersSchema,
+  containersTourUpdateSchema,
   createDependencyEdgeSchema,
   createGroupSchema,
+  groupsTourUpdateSchema,
   listContainersQuerySchema,
   orchestrationExecuteSchema,
   saveGraphLayoutSchema,
@@ -28,15 +30,19 @@ import {
   createGroupContainerMembership,
   dockerClient,
   executeGroupAction,
+  getContainersPageData,
   getDashboard,
   getGroupDetail,
   getGroupPlan,
+  getGroupsPageData,
   getRunDetail,
   listActivity,
   listContainersWithGroups,
   listGroupRuns,
   listGroups,
   saveGroupExecutionOrder,
+  setContainersTourSeen,
+  setGroupsTourSeen,
   validateGroupGraph,
 } from "./services.js";
 
@@ -220,6 +226,33 @@ export const buildApp = () => {
   app.get("/api/containers", async (request) => {
     const query = listContainersQuerySchema.parse(request.query);
     return listContainersWithGroups(query);
+  });
+  app.get("/api/containers/page-data", async () => getContainersPageData());
+  app.post("/api/onboarding/containers-tour", async (request) => {
+    const body = parseBody(containersTourUpdateSchema, request.body);
+    try {
+      return await setContainersTourSeen(body.containersTourSeen);
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: string }).code ?? "") : "";
+      if (code === "CONTAINERS_TOUR_PERSISTENCE_UNAVAILABLE") {
+        throw app.httpErrors.conflict(error instanceof Error ? error.message : "Containers tour persistence is unavailable.");
+      }
+
+      throw error;
+    }
+  });
+  app.post("/api/onboarding/groups-tour", async (request) => {
+    const body = parseBody(groupsTourUpdateSchema, request.body);
+    try {
+      return await setGroupsTourSeen(body.groupsTourSeen);
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: string }).code ?? "") : "";
+      if (code === "GROUPS_TOUR_PERSISTENCE_UNAVAILABLE") {
+        throw app.httpErrors.conflict(error instanceof Error ? error.message : "Groups tour persistence is unavailable.");
+      }
+
+      throw error;
+    }
   });
 
   app.get("/api/containers/:idOrName", async (request) => dockerClient.getContainerDetail((request.params as { idOrName: string }).idOrName));
@@ -447,6 +480,7 @@ export const buildApp = () => {
   app.get("/api/networks/:id", async (request) => dockerClient.inspectNetwork((request.params as { id: string }).id));
 
   app.get("/api/groups", async () => listGroups());
+  app.get("/api/groups/page-data", async () => getGroupsPageData());
   app.post("/api/groups", async (request) => {
     const body = parseBody(createGroupSchema, request.body);
     return prisma.group.create({

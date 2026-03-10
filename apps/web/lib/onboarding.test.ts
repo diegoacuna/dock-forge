@@ -5,7 +5,9 @@ import {
   getCreateGroupHref,
   getInitialGroupDetailTab,
   getPostCreateGroupHref,
+  shouldShowContainersOnboarding,
   shouldShowDashboardOnboarding,
+  shouldShowGroupsOnboarding,
 } from "./onboarding";
 
 describe("onboarding helpers", () => {
@@ -38,5 +40,18 @@ describe("onboarding helpers", () => {
   it("defines a four-step onboarding tour ending in the create-group action", () => {
     expect(dashboardOnboardingSteps).toHaveLength(4);
     expect(dashboardOnboardingSteps.at(-1)?.id).toBe("launch");
+  });
+
+  it("shows containers onboarding only when runtime is connected, containers exist, and it has not been seen", () => {
+    expect(shouldShowContainersOnboarding({ runtimeStatus: "connected", totalContainers: 3, seen: false })).toBe(true);
+    expect(shouldShowContainersOnboarding({ runtimeStatus: "unavailable", totalContainers: 3, seen: false })).toBe(false);
+    expect(shouldShowContainersOnboarding({ runtimeStatus: "connected", totalContainers: 0, seen: false })).toBe(false);
+    expect(shouldShowContainersOnboarding({ runtimeStatus: "connected", totalContainers: 3, seen: true })).toBe(false);
+  });
+
+  it("shows groups onboarding only when groups exist and it has not been seen", () => {
+    expect(shouldShowGroupsOnboarding({ totalGroups: 2, seen: false })).toBe(true);
+    expect(shouldShowGroupsOnboarding({ totalGroups: 0, seen: false })).toBe(false);
+    expect(shouldShowGroupsOnboarding({ totalGroups: 2, seen: true })).toBe(false);
   });
 });

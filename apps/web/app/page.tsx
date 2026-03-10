@@ -7,16 +7,19 @@ import { useApiQuery } from "../lib/api";
 import { formatTimestamp } from "../lib/utils";
 import { DashboardOnboarding, DashboardOnboardingEmptyState } from "../components/dashboard-onboarding";
 import { DASHBOARD_ONBOARDING_DISMISSED_KEY, shouldShowDashboardOnboarding } from "../lib/onboarding";
-import { PageHeader, Panel, StatCard } from "../components/ui";
+import { Button, PageHeader, Panel, StatCard } from "../components/ui";
 import { StateBadge } from "../components/status";
 
 export default function DashboardPage() {
   const { data } = useApiQuery<DashboardData>(["dashboard"], "/dashboard", 10_000);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const [manualOnboardingOpen, setManualOnboardingOpen] = useState(false);
+  const [onboardingHydrated, setOnboardingHydrated] = useState(false);
 
   useEffect(() => {
     const dismissed = window.localStorage.getItem(DASHBOARD_ONBOARDING_DISMISSED_KEY) === "true";
     setOnboardingDismissed(dismissed);
+    setOnboardingHydrated(true);
   }, []);
 
   useEffect(() => {
@@ -29,25 +32,36 @@ export default function DashboardPage() {
   const dismissOnboarding = () => {
     window.localStorage.setItem(DASHBOARD_ONBOARDING_DISMISSED_KEY, "true");
     setOnboardingDismissed(true);
+    setManualOnboardingOpen(false);
   };
 
   const restartOnboarding = () => {
     window.localStorage.removeItem(DASHBOARD_ONBOARDING_DISMISSED_KEY);
     setOnboardingDismissed(false);
+    setManualOnboardingOpen(true);
   };
 
-  const showOnboarding = shouldShowDashboardOnboarding(data?.totalGroups ?? 0, onboardingDismissed);
+  const canEvaluateOnboarding = onboardingHydrated || manualOnboardingOpen;
+  const showOnboarding =
+    canEvaluateOnboarding && (manualOnboardingOpen || shouldShowDashboardOnboarding(data?.totalGroups ?? 0, onboardingDismissed));
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Dashboard"
         description="Craft your local Docker empire with group orchestration, dependency-aware startup, and live inspection."
+        actions={
+          !showOnboarding ? (
+            <Button variant="ghost" onClick={restartOnboarding}>
+              Show onboarding again
+            </Button>
+          ) : undefined
+        }
       />
 
       {showOnboarding ? <DashboardOnboarding onSkip={dismissOnboarding} /> : null}
 
-      {!showOnboarding && (data?.totalGroups ?? 0) === 0 ? <DashboardOnboardingEmptyState onRestart={restartOnboarding} /> : null}
+      {canEvaluateOnboarding && !showOnboarding && (data?.totalGroups ?? 0) === 0 ? <DashboardOnboardingEmptyState onRestart={restartOnboarding} /> : null}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Containers" value={data?.totalContainers ?? 0} hint={`${data?.runningContainers ?? 0} running`} />
