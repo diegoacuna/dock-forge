@@ -5,6 +5,7 @@ export type FolderAggregateStatus = "error" | "restarting" | "degraded" | "runni
 export type FolderContainerStatus = {
   id: string;
   name: string;
+  detailTarget: string;
   runtimeState: GroupContainer["runtimeState"];
   runtimeHealth: GroupContainer["runtimeHealth"];
   runtimeStatusText: string | null;
@@ -82,6 +83,7 @@ export const buildFolderGraphSummaries = (group: Pick<GroupDetail, "containers" 
         .map<FolderContainerStatus>((container) => ({
           id: container.id,
           name: getContainerDisplayName(container),
+          detailTarget: container.containerNameSnapshot,
           runtimeState: container.runtimeState,
           runtimeHealth: container.runtimeHealth,
           runtimeStatusText: container.runtimeStatusText,

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import React from "react";
 import { ArrowRight, FolderTree } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -183,7 +184,11 @@ const FolderInspector = ({ folder }: { folder: FolderGraphSummary | null }) => (
           </div>
           <div className="space-y-3">
             {folder.containers.map((container) => (
-              <div key={container.id} className="rounded-3xl border border-white/10 bg-white/5 p-4">
+              <Link
+                key={container.id}
+                href={`/containers/${encodeURIComponent(container.detailTarget)}`}
+                className="block rounded-3xl border border-white/10 bg-white/5 p-4 transition hover:border-white/25 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-white">{container.name}</p>
@@ -192,10 +197,12 @@ const FolderInspector = ({ folder }: { folder: FolderGraphSummary | null }) => (
                   <StateBadge state={container.runtimeState} health={container.runtimeHealth} />
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {container.runtimeHealth && container.runtimeHealth !== "unknown" ? <Badge tone={container.runtimeHealth === "unhealthy" ? "danger" : "success"}>{container.runtimeHealth}</Badge> : null}
+                  {container.runtimeHealth && container.runtimeHealth !== "unknown" ? (
+                    <Badge tone={container.runtimeHealth === "unhealthy" ? "danger" : "success"}>{container.runtimeHealth}</Badge>
+                  ) : null}
                   {container.source === "snapshot" ? <Badge tone="warning">Snapshot only</Badge> : <Badge tone="accent">Docker runtime</Badge>}
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         </div>

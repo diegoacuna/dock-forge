@@ -107,6 +107,21 @@ describe("GroupGraphPanel", () => {
     expect(inspector.textContent).toContain("Snapshot only");
   });
 
+  it("links listed containers in the inspector to their container profile pages", () => {
+    render(<GroupGraphPanel group={createGroupDetail()} />);
+
+    const dbLink = screen.getByRole("link", { name: /db/i });
+    expect(dbLink.getAttribute("href")).toBe("/containers/db");
+
+    fireEvent.click(screen.getByTestId("graph-node-app"));
+
+    const apiLink = screen.getByRole("link", { name: /API/i });
+    const workerLink = screen.getByRole("link", { name: /worker/i });
+
+    expect(apiLink.getAttribute("href")).toBe("/containers/api");
+    expect(workerLink.getAttribute("href")).toBe("/containers/worker");
+  });
+
   it("shows the empty state when the group has no execution stages", () => {
     render(
       <GroupGraphPanel
