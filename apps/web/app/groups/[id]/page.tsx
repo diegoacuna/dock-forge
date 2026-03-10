@@ -1,11 +1,11 @@
 "use client";
 
 import { Suspense, use, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ContainerSummary, GroupDetail, GroupRun, OrchestrationPlan } from "@dockforge/shared";
 import { fetchJson, useApiQuery } from "@/lib/api";
-import { getInitialGroupDetailTab } from "@/lib/onboarding";
+import { resolveGroupDetailTab } from "@/lib/onboarding";
 import { formatTimestamp } from "@/lib/utils";
 import { ExecutionOrderPanel, GroupAttachOnboardingCallout, GroupAttachPanel } from "@/components/group-detail-panels";
 import { GroupGraphPanel } from "@/components/group-graph-panel";
@@ -24,9 +24,15 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
 function GroupDetailPageContent({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
+  const router = useRouter();
   const searchParams = useSearchParams();
   const onboardingMode = searchParams.get("onboarding");
-  const [tab, setTab] = useState<(typeof GROUP_DETAIL_TABS)[number]>(getInitialGroupDetailTab(onboardingMode) as (typeof GROUP_DETAIL_TABS)[number]);
+  const requestedTab = searchParams.get("tab");
+  const tab = resolveGroupDetailTab({
+    onboardingParam: onboardingMode,
+    requestedTab,
+    allowedTabs: GROUP_DETAIL_TABS,
+  }) as (typeof GROUP_DETAIL_TABS)[number];
   const [attachPanelOpen, setAttachPanelOpen] = useState(false);
   const { data: group } = useApiQuery<GroupDetail>(["group", resolvedParams.id], `/groups/${resolvedParams.id}`, 8_000);
   const { data: containers } = useApiQuery<ContainerSummary[]>(["containers"], "/containers", 8_000);
@@ -51,6 +57,12 @@ function GroupDetailPageContent({ params }: { params: Promise<{ id: string }> })
       method: "POST",
       body: JSON.stringify({}),
     });
+  };
+
+  const handleTabClick = (nextTab: (typeof GROUP_DETAIL_TABS)[number]) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", nextTab);
+    router.push(`/groups/${resolvedParams.id}?${params.toString()}`);
   };
 
   return (
@@ -79,7 +91,7 @@ function GroupDetailPageContent({ params }: { params: Promise<{ id: string }> })
         {GROUP_DETAIL_TABS.map((item) => (
           <button
             key={item}
-            onClick={() => setTab(item)}
+            onClick={() => handleTabClick(item)}
             className={`rounded-2xl px-4 py-2 text-sm ${tab === item ? "bg-slate-950 text-white" : "bg-white text-slate-700"}`}
           >
             {item}

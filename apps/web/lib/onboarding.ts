@@ -82,5 +82,25 @@ export const getCreateGroupHref = (fromOnboarding: boolean) =>
 export const getPostCreateGroupHref = (groupId: string, fromOnboarding: boolean) =>
   fromOnboarding ? `/groups/${groupId}?onboarding=attach` : `/groups/${groupId}`;
 
+export const resolveGroupDetailTab = ({
+  onboardingParam,
+  requestedTab,
+  allowedTabs,
+}: {
+  onboardingParam: string | null;
+  requestedTab: string | null;
+  allowedTabs: readonly string[];
+}) => {
+  if (requestedTab && allowedTabs.includes(requestedTab)) {
+    return requestedTab;
+  }
+
+  return onboardingParam === "attach" ? "Containers" : "Overview";
+};
+
 export const getInitialGroupDetailTab = (onboardingParam: string | null) =>
-  onboardingParam === "attach" ? "Containers" : "Overview";
+  resolveGroupDetailTab({
+    onboardingParam,
+    requestedTab: null,
+    allowedTabs: ["Overview", "Containers"],
+  });

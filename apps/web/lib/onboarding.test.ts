@@ -5,6 +5,7 @@ import {
   getCreateGroupHref,
   getInitialGroupDetailTab,
   getPostCreateGroupHref,
+  resolveGroupDetailTab,
   shouldShowContainersOnboarding,
   shouldShowDashboardOnboarding,
   shouldShowGroupsOnboarding,
@@ -35,6 +36,34 @@ describe("onboarding helpers", () => {
     expect(getInitialGroupDetailTab("attach")).toBe("Containers");
     expect(getInitialGroupDetailTab(null)).toBe("Overview");
     expect(getInitialGroupDetailTab("other")).toBe("Overview");
+  });
+
+  it("prefers a valid requested group detail tab over onboarding defaults", () => {
+    expect(
+      resolveGroupDetailTab({
+        onboardingParam: "attach",
+        requestedTab: "Execution Order",
+        allowedTabs: ["Overview", "Containers", "Execution Order", "Graph", "Run History"],
+      }),
+    ).toBe("Execution Order");
+  });
+
+  it("falls back to the onboarding default when the requested group detail tab is invalid", () => {
+    expect(
+      resolveGroupDetailTab({
+        onboardingParam: "attach",
+        requestedTab: "Bad Tab",
+        allowedTabs: ["Overview", "Containers", "Execution Order", "Graph", "Run History"],
+      }),
+    ).toBe("Containers");
+
+    expect(
+      resolveGroupDetailTab({
+        onboardingParam: null,
+        requestedTab: "Bad Tab",
+        allowedTabs: ["Overview", "Containers", "Execution Order", "Graph", "Run History"],
+      }),
+    ).toBe("Overview");
   });
 
   it("defines a four-step onboarding tour ending in the create-group action", () => {

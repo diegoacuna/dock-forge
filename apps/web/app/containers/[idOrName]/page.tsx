@@ -1,14 +1,13 @@
 "use client";
 
-import { Suspense, use, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, use } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { ContainerDetail } from "@dockforge/shared";
 import { useApiQuery } from "@/lib/api";
+import { CONTAINER_DETAIL_TABS, resolveContainerDetailTab } from "@/lib/container-detail-tabs";
 import { formatTimestamp } from "@/lib/utils";
 import { CopyButton, PageHeader, Panel } from "@/components/ui";
 import { ContainerTerminalPanel } from "@/components/container-terminal-panel";
-
-const tabs = ["Overview", "Environment", "Mounts / Volumes", "Networks", "Compose metadata", "Raw inspect", "Terminal"] as const;
 
 export default function ContainerDetailPage({ params }: { params: Promise<{ idOrName: string }> }) {
   return (
@@ -20,28 +19,28 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ idOr
 
 function ContainerDetailPageContent({ params }: { params: Promise<{ idOrName: string }> }) {
   const resolvedParams = use(params);
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
   const { data } = useApiQuery<ContainerDetail>(["container", resolvedParams.idOrName], `/containers/${resolvedParams.idOrName}`, 8_000);
   const requestedTab = searchParams.get("tab");
-
-  useEffect(() => {
-    if (requestedTab && tabs.includes(requestedTab as (typeof tabs)[number])) {
-      setTab(requestedTab as (typeof tabs)[number]);
-    }
-  }, [requestedTab]);
+  const tab = resolveContainerDetailTab(requestedTab) as (typeof CONTAINER_DETAIL_TABS)[number];
 
   const overview = data?.overview;
+  const handleTabClick = (nextTab: (typeof CONTAINER_DETAIL_TABS)[number]) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", nextTab);
+    router.push(`/containers/${resolvedParams.idOrName}?${params.toString()}`);
+  };
 
   return (
     <div className="space-y-6">
       <PageHeader title={overview?.name ?? resolvedParams.idOrName} description="Raw Docker inspect plus focused operational views." />
 
       <div className="flex flex-wrap gap-2">
-        {tabs.map((item) => (
+        {CONTAINER_DETAIL_TABS.map((item) => (
           <button
             key={item}
-            onClick={() => setTab(item)}
+            onClick={() => handleTabClick(item)}
             className={`rounded-2xl px-4 py-2 text-sm ${tab === item ? "bg-slate-950 text-white" : "bg-white text-slate-700"}`}
           >
             {item}
