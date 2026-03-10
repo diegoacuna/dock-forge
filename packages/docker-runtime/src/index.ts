@@ -694,7 +694,11 @@ export type RuntimeContainerRef = {
   containerKey: string;
 };
 
-export const resolveContainerByKey = async (client: DockerRuntimeClient, containerKey: string, lastKnownId?: string | null) => {
+export const resolveContainerByKey = async (
+  client: Pick<DockerRuntimeClient, "listContainers">,
+  containerKey: string,
+  lastKnownId?: string | null,
+) => {
   const containers = await client.listContainers();
   const normalizedKey = canonicalizeContainerKey(containerKey);
   const byName = containers.find((container) => container.containerKey === normalizedKey);

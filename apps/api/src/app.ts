@@ -8,6 +8,7 @@ import {
   containerLogsQuerySchema,
   addGroupContainerSchema,
   bulkAddGroupContainersSchema,
+  completeInstallSchema,
   containersTourUpdateSchema,
   createDependencyEdgeSchema,
   createGroupSchema,
@@ -18,6 +19,7 @@ import {
   saveExecutionOrderSchema,
   terminalClientMessageSchema,
   type TerminalDebugSnapshot,
+  updateInstallConfigSchema,
   updateGroupContainerSchema,
   updateGroupSchema,
   validateGraphSchema,
@@ -27,6 +29,7 @@ import { prisma } from "@dockforge/db";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
   bulkAttachGroupContainers,
+  completeInstall,
   createGroupContainerMembership,
   dockerClient,
   executeGroupAction,
@@ -35,6 +38,7 @@ import {
   getGroupDetail,
   getGroupPlan,
   getGroupsPageData,
+  getInstallStatus,
   getRunDetail,
   listActivity,
   listContainersWithGroups,
@@ -43,6 +47,7 @@ import {
   saveGroupExecutionOrder,
   setContainersTourSeen,
   setGroupsTourSeen,
+  updateInstallConfig,
   validateGroupGraph,
 } from "./services.js";
 
@@ -219,6 +224,34 @@ export const buildApp = () => {
   app.get("/api/health", async () => {
     await dockerClient.ping();
     return { ok: true };
+  });
+
+  app.get("/api/install/status", async () => getInstallStatus());
+  app.post("/api/install/complete", async (request) => {
+    const body = parseBody(completeInstallSchema, request.body);
+    try {
+      return await completeInstall(body);
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: string }).code ?? "") : "";
+      if (code === "INSTALL_PERSISTENCE_UNAVAILABLE") {
+        throw app.httpErrors.conflict(error instanceof Error ? error.message : "Install persistence is unavailable.");
+      }
+
+      throw error;
+    }
+  });
+  app.put("/api/install/config", async (request) => {
+    const body = parseBody(updateInstallConfigSchema, request.body);
+    try {
+      return await updateInstallConfig(body);
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: string }).code ?? "") : "";
+      if (code === "INSTALL_PERSISTENCE_UNAVAILABLE") {
+        throw app.httpErrors.conflict(error instanceof Error ? error.message : "Install persistence is unavailable.");
+      }
+
+      throw error;
+    }
   });
 
   app.get("/api/dashboard", async () => getDashboard());

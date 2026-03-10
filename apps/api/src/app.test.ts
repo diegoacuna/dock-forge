@@ -11,6 +11,11 @@ vi.mock("@dockforge/db", () => ({
 
 vi.mock("./services.js", () => ({
   bulkAttachGroupContainers: vi.fn(),
+  completeInstall: vi.fn(async (payload: unknown) => ({
+    installCompleted: true,
+    persistenceAvailable: true,
+    config: payload,
+  })),
   createGroupContainerMembership: vi.fn(),
   dockerClient: {
     ping: vi.fn().mockResolvedValue({ ok: true }),
@@ -41,6 +46,15 @@ vi.mock("./services.js", () => ({
     groups: [],
     onboarding: { groupsTourSeen: false, persistenceAvailable: true },
   }),
+  getInstallStatus: vi.fn().mockResolvedValue({
+    installCompleted: false,
+    persistenceAvailable: true,
+    config: {
+      dockerConnectionMode: "socket",
+      dockerSocketPath: "/var/run/docker.sock",
+      dockerHost: null,
+    },
+  }),
   getRunDetail: vi.fn(),
   listActivity: vi.fn(),
   listContainersWithGroups: vi.fn().mockResolvedValue([]),
@@ -49,12 +63,92 @@ vi.mock("./services.js", () => ({
   saveGroupExecutionOrder: vi.fn(),
   setContainersTourSeen: vi.fn(async (value: boolean) => ({ containersTourSeen: value })),
   setGroupsTourSeen: vi.fn(async (value: boolean) => ({ groupsTourSeen: value })),
+  updateInstallConfig: vi.fn(async (payload: unknown) => ({
+    installCompleted: true,
+    persistenceAvailable: true,
+    config: payload,
+  })),
   validateGroupGraph: vi.fn(),
 }));
 
 describe("container log routes", () => {
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("returns install status", async () => {
+    const services = await import("./services.js");
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/install/status",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(services.getInstallStatus).toHaveBeenCalled();
+    expect(response.json()).toEqual({
+      installCompleted: false,
+      persistenceAvailable: true,
+      config: {
+        dockerConnectionMode: "socket",
+        dockerSocketPath: "/var/run/docker.sock",
+        dockerHost: null,
+      },
+    });
+
+    await app.close();
+  });
+
+  it("completes install and persists docker config", async () => {
+    const services = await import("./services.js");
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/install/complete",
+      payload: {
+        dockerConnectionMode: "host",
+        dockerSocketPath: null,
+        dockerHost: "tcp://127.0.0.1:2375",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(services.completeInstall).toHaveBeenCalledWith({
+      dockerConnectionMode: "host",
+      dockerSocketPath: null,
+      dockerHost: "tcp://127.0.0.1:2375",
+    });
+
+    await app.close();
+  });
+
+  it("updates persisted install config", async () => {
+    const services = await import("./services.js");
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/install/config",
+      payload: {
+        dockerConnectionMode: "socket",
+        dockerSocketPath: "/custom/docker.sock",
+        dockerHost: null,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(services.updateInstallConfig).toHaveBeenCalledWith({
+      dockerConnectionMode: "socket",
+      dockerSocketPath: "/custom/docker.sock",
+      dockerHost: null,
+    });
+
+    await app.close();
   });
 
   it("returns the default container log tail", async () => {

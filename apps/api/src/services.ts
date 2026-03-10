@@ -4,6 +4,7 @@ import {
   getFolderLabel,
   canonicalizeContainerKey,
   formatDate,
+  type DockerConnectionMode,
   type BulkAddGroupContainersResult,
   type ContainersPageData,
   type ContainersRuntime,
@@ -14,10 +15,13 @@ import {
   type GroupExecutionStage,
   type GroupContainer as GroupContainerDto,
   type GroupDetail,
+  type InstallConfig,
+  type InstallStatus,
   type GroupRun,
   type GroupRunStep,
 } from "@dockforge/shared";
 import { buildPlan, executePlan, validateGraph, type GraphEdge } from "@dockforge/orchestrator";
+import { config } from "./config.js";
 
 const includeGroup = {
   containers: true,
@@ -36,11 +40,15 @@ const includeGroup = {
   },
 } as const;
 
-export const dockerClient = new DockerRuntimeClient();
 const CONTAINERS_TOUR_SEEN_KEY = "containersTourSeen";
 const GROUPS_TOUR_SEEN_KEY = "groupsTourSeen";
+const INSTALL_COMPLETED_KEY = "installCompleted";
+const DOCKER_CONNECTION_MODE_KEY = "dockerConnectionMode";
+const DOCKER_SOCKET_PATH_KEY = "dockerSocketPath";
+const DOCKER_HOST_KEY = "dockerHost";
 const CONTAINERS_TOUR_PERSISTENCE_UNAVAILABLE_CODE = "CONTAINERS_TOUR_PERSISTENCE_UNAVAILABLE";
 const GROUPS_TOUR_PERSISTENCE_UNAVAILABLE_CODE = "GROUPS_TOUR_PERSISTENCE_UNAVAILABLE";
+const INSTALL_PERSISTENCE_UNAVAILABLE_CODE = "INSTALL_PERSISTENCE_UNAVAILABLE";
 
 const isMissingAppSettingTableError = (error: unknown) =>
   typeof error === "object" &&
@@ -60,14 +68,18 @@ const createGroupsTourPersistenceUnavailableError = () => {
   return error;
 };
 
-const readBooleanAppSetting = async (key: string) => {
-  try {
-    const setting = await prisma.appSetting.findUnique({
-      where: { key },
-    });
+const createInstallPersistenceUnavailableError = () => {
+  const error = new Error("Install persistence is unavailable until migrations are applied. Run `pnpm db:migrate`.");
+  Object.assign(error, { code: INSTALL_PERSISTENCE_UNAVAILABLE_CODE });
+  return error;
+};
 
+const readAppSetting = async (key: string) => {
+  try {
     return {
-      seen: setting?.value === "true",
+      setting: await prisma.appSetting.findUnique({
+        where: { key },
+      }),
       persistenceAvailable: true,
     };
   } catch (error) {
@@ -80,6 +92,22 @@ const readBooleanAppSetting = async (key: string) => {
 
     throw error;
   }
+};
+
+const readBooleanAppSetting = async (key: string) => {
+  const result = await readAppSetting(key);
+  return {
+    value: result.setting?.value === "true",
+    persistenceAvailable: result.persistenceAvailable,
+  };
+};
+
+const readStringAppSetting = async (key: string) => {
+  const result = await readAppSetting(key);
+  return {
+    value: result.setting?.value ?? null,
+    persistenceAvailable: result.persistenceAvailable,
+  };
 };
 
 const writeBooleanAppSetting = async ({
@@ -107,6 +135,236 @@ const writeBooleanAppSetting = async ({
 
     throw error;
   }
+};
+
+const writeStringAppSetting = async ({
+  key,
+  value,
+  onPersistenceUnavailable,
+}: {
+  key: string;
+  value: string;
+  onPersistenceUnavailable: () => Error;
+}) => {
+  try {
+    await prisma.appSetting.upsert({
+      where: { key },
+      update: { value },
+      create: {
+        key,
+        value,
+      },
+    });
+  } catch (error) {
+    if (isMissingAppSettingTableError(error)) {
+      throw onPersistenceUnavailable();
+    }
+
+    throw error;
+  }
+};
+
+const writeAppSettings = async ({
+  entries,
+  onPersistenceUnavailable,
+}: {
+  entries: Array<{ key: string; value: string }>;
+  onPersistenceUnavailable: () => Error;
+}) => {
+  try {
+    await prisma.$transaction(
+      entries.map((entry) =>
+        prisma.appSetting.upsert({
+          where: { key: entry.key },
+          update: { value: entry.value },
+          create: entry,
+        }),
+      ),
+    );
+  } catch (error) {
+    if (isMissingAppSettingTableError(error)) {
+      throw onPersistenceUnavailable();
+    }
+
+    throw error;
+  }
+};
+
+const normalizeInstallConfig = (configValue: {
+  dockerConnectionMode: string | null;
+  dockerSocketPath: string | null;
+  dockerHost: string | null;
+}): InstallConfig => {
+  const fallbackMode = config.dockerHost ? "host" : "socket";
+  const dockerConnectionMode = (
+    configValue.dockerConnectionMode === "host" || configValue.dockerConnectionMode === "socket"
+      ? configValue.dockerConnectionMode
+      : fallbackMode
+  ) as DockerConnectionMode;
+
+  const savedSocketPath = (configValue.dockerSocketPath ?? "").trim();
+  const savedDockerHost = (configValue.dockerHost ?? "").trim();
+
+  return {
+    dockerConnectionMode,
+    dockerSocketPath:
+      dockerConnectionMode === "socket" ? savedSocketPath || config.dockerSocketPath || "/var/run/docker.sock" : null,
+    dockerHost: dockerConnectionMode === "host" ? savedDockerHost || config.dockerHost || null : null,
+  };
+};
+
+const readInstallConfig = async () => {
+  const [mode, socketPath, dockerHost] = await Promise.all([
+    readStringAppSetting(DOCKER_CONNECTION_MODE_KEY),
+    readStringAppSetting(DOCKER_SOCKET_PATH_KEY),
+    readStringAppSetting(DOCKER_HOST_KEY),
+  ]);
+
+  return {
+    config: normalizeInstallConfig({
+      dockerConnectionMode: mode.value,
+      dockerSocketPath: socketPath.value,
+      dockerHost: dockerHost.value,
+    }),
+    persistenceAvailable: mode.persistenceAvailable && socketPath.persistenceAvailable && dockerHost.persistenceAvailable,
+  };
+};
+
+const toInstallSettingsEntries = (installConfig: InstallConfig) => [
+  {
+    key: DOCKER_CONNECTION_MODE_KEY,
+    value: installConfig.dockerConnectionMode,
+  },
+  {
+    key: DOCKER_SOCKET_PATH_KEY,
+    value: installConfig.dockerConnectionMode === "socket" ? installConfig.dockerSocketPath ?? "" : "",
+  },
+  {
+    key: DOCKER_HOST_KEY,
+    value: installConfig.dockerConnectionMode === "host" ? installConfig.dockerHost ?? "" : "",
+  },
+];
+
+const createDockerRuntimeClient = async () => {
+  const effectiveConfig = await readEffectiveDockerConnectionConfig();
+  return new DockerRuntimeClient({
+    dockerHost: effectiveConfig.dockerConnectionMode === "host" ? effectiveConfig.dockerHost ?? undefined : undefined,
+    socketPath: effectiveConfig.dockerConnectionMode === "socket" ? effectiveConfig.dockerSocketPath ?? undefined : undefined,
+  });
+};
+
+const withDockerClient = async <T>(callback: (client: DockerRuntimeClient) => Promise<T>) => {
+  const client = await createDockerRuntimeClient();
+  return callback(client);
+};
+
+type RuntimeDockerClient = {
+  ping: () => Promise<{ ok: boolean }>;
+  listContainers: () => Promise<Awaited<ReturnType<DockerRuntimeClient["listContainers"]>>>;
+  inspectContainer: (idOrName: string) => Promise<Awaited<ReturnType<DockerRuntimeClient["inspectContainer"]>>>;
+  getContainerDetail: (idOrName: string) => Promise<Awaited<ReturnType<DockerRuntimeClient["getContainerDetail"]>>>;
+  getContainerLogs: (
+    idOrName: string,
+    options?: { tailLines?: number },
+  ) => Promise<Awaited<ReturnType<DockerRuntimeClient["getContainerLogs"]>>>;
+  streamContainerLogs: (
+    idOrName: string,
+    callbacks: Parameters<DockerRuntimeClient["streamContainerLogs"]>[1],
+  ) => Promise<Awaited<ReturnType<DockerRuntimeClient["streamContainerLogs"]>>>;
+  openContainerTerminal: (
+    idOrName: string,
+    options: Parameters<DockerRuntimeClient["openContainerTerminal"]>[1],
+    callbacks: Parameters<DockerRuntimeClient["openContainerTerminal"]>[2],
+  ) => Promise<Awaited<ReturnType<DockerRuntimeClient["openContainerTerminal"]>>>;
+  startContainer: (idOrName: string) => Promise<void>;
+  stopContainer: (idOrName: string) => Promise<void>;
+  restartContainer: (idOrName: string) => Promise<void>;
+  waitForReady: (
+    idOrName: string,
+    options?: { timeoutMs?: number },
+  ) => Promise<Awaited<ReturnType<DockerRuntimeClient["waitForReady"]>>>;
+  listVolumes: () => Promise<Awaited<ReturnType<DockerRuntimeClient["listVolumes"]>>>;
+  inspectVolume: (name: string) => Promise<Awaited<ReturnType<DockerRuntimeClient["inspectVolume"]>>>;
+  listNetworks: () => Promise<Awaited<ReturnType<DockerRuntimeClient["listNetworks"]>>>;
+  inspectNetwork: (id: string) => Promise<Awaited<ReturnType<DockerRuntimeClient["inspectNetwork"]>>>;
+};
+
+const readInstallCompletedState = async () => {
+  const setting = await readBooleanAppSetting(INSTALL_COMPLETED_KEY);
+  return {
+    installCompleted: setting.value,
+    persistenceAvailable: setting.persistenceAvailable,
+  };
+};
+
+export const readEffectiveDockerConnectionConfig = async (): Promise<InstallConfig> => {
+  const installConfig = await readInstallConfig();
+  return installConfig.config;
+};
+
+export const getInstallStatus = async (): Promise<InstallStatus> => {
+  const [installState, installConfig] = await Promise.all([readInstallCompletedState(), readInstallConfig()]);
+
+  return {
+    installCompleted: installState.installCompleted,
+    persistenceAvailable: installState.persistenceAvailable && installConfig.persistenceAvailable,
+    config: installConfig.config,
+  };
+};
+
+export const completeInstall = async (installConfig: InstallConfig): Promise<InstallStatus> => {
+  await writeAppSettings({
+    entries: [
+      { key: INSTALL_COMPLETED_KEY, value: "true" },
+      ...toInstallSettingsEntries(installConfig),
+    ],
+    onPersistenceUnavailable: createInstallPersistenceUnavailableError,
+  });
+
+  return {
+    installCompleted: true,
+    persistenceAvailable: true,
+    config: normalizeInstallConfig(installConfig),
+  };
+};
+
+export const updateInstallConfig = async (installConfig: InstallConfig): Promise<InstallStatus> => {
+  await writeAppSettings({
+    entries: toInstallSettingsEntries(installConfig),
+    onPersistenceUnavailable: createInstallPersistenceUnavailableError,
+  });
+
+  const installState = await readInstallCompletedState();
+
+  return {
+    installCompleted: installState.installCompleted,
+    persistenceAvailable: installState.persistenceAvailable,
+    config: normalizeInstallConfig(installConfig),
+  };
+};
+
+export const dockerClient: RuntimeDockerClient = {
+  ping: () => withDockerClient((client) => client.ping()),
+  listContainers: () => withDockerClient((client) => client.listContainers()),
+  inspectContainer: (idOrName: string) => withDockerClient((client) => client.inspectContainer(idOrName)),
+  getContainerDetail: (idOrName: string) => withDockerClient((client) => client.getContainerDetail(idOrName)),
+  getContainerLogs: (idOrName: string, options?: { tailLines?: number }) =>
+    withDockerClient((client) => client.getContainerLogs(idOrName, options)),
+  streamContainerLogs: (idOrName: string, callbacks: Parameters<DockerRuntimeClient["streamContainerLogs"]>[1]) =>
+    withDockerClient((client) => client.streamContainerLogs(idOrName, callbacks)),
+  openContainerTerminal: (
+    idOrName: string,
+    options: Parameters<DockerRuntimeClient["openContainerTerminal"]>[1],
+    callbacks: Parameters<DockerRuntimeClient["openContainerTerminal"]>[2],
+  ) => withDockerClient((client) => client.openContainerTerminal(idOrName, options, callbacks)),
+  startContainer: (idOrName: string) => withDockerClient((client) => client.startContainer(idOrName)),
+  stopContainer: (idOrName: string) => withDockerClient((client) => client.stopContainer(idOrName)),
+  restartContainer: (idOrName: string) => withDockerClient((client) => client.restartContainer(idOrName)),
+  waitForReady: (idOrName: string, options?: { timeoutMs?: number }) => withDockerClient((client) => client.waitForReady(idOrName, options)),
+  listVolumes: () => withDockerClient((client) => client.listVolumes()),
+  inspectVolume: (name: string) => withDockerClient((client) => client.inspectVolume(name)),
+  listNetworks: () => withDockerClient((client) => client.listNetworks()),
+  inspectNetwork: (id: string) => withDockerClient((client) => client.inspectNetwork(id)),
 };
 
 const classifyDockerRuntimeError = (error: unknown): ContainersRuntime => {
@@ -146,7 +404,7 @@ const classifyDockerRuntimeError = (error: unknown): ContainersRuntime => {
 const readContainersTourState = async () => {
   const setting = await readBooleanAppSetting(CONTAINERS_TOUR_SEEN_KEY);
   return {
-    containersTourSeen: setting.seen,
+    containersTourSeen: setting.value,
     persistenceAvailable: setting.persistenceAvailable,
   };
 };
@@ -154,7 +412,7 @@ const readContainersTourState = async () => {
 const readGroupsTourState = async () => {
   const setting = await readBooleanAppSetting(GROUPS_TOUR_SEEN_KEY);
   return {
-    groupsTourSeen: setting.seen,
+    groupsTourSeen: setting.value,
     persistenceAvailable: setting.persistenceAvailable,
   };
 };

@@ -17,6 +17,11 @@ const navigation = [
 
 export const AppShell = ({ children }: { children: React.ReactNode }) => {
   const pathname = usePathname();
+  const isInstallPage = pathname === "/install";
+
+  if (isInstallPage) {
+    return <main className="min-h-screen bg-slate-100">{children}</main>;
+  }
 
   return (
     <div className="min-h-screen">
@@ -59,4 +64,3 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
     </div>
   );
 };
-

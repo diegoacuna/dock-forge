@@ -23,11 +23,13 @@ export const GroupAttachPanel = ({
   containers,
   title = "Attach containers",
   description = "Search individual containers or bulk-attach all current containers from a folder.",
+  showHeader = true,
 }: {
   group: GroupDetail;
   containers: ContainerSummary[];
   title?: string;
   description?: string;
+  showHeader?: boolean;
 }) => {
   const [containerQuery, setContainerQuery] = useState("");
   const [folderQuery, setFolderQuery] = useState("");
@@ -161,10 +163,12 @@ export const GroupAttachPanel = ({
 
   return (
     <Panel className="space-y-5">
-      <div>
-        <h2 className="text-lg font-semibold text-slate-950">{title}</h2>
-        <p className="mt-2 text-sm text-slate-600">{description}</p>
-      </div>
+      {showHeader ? (
+        <div>
+          <h2 className="text-lg font-semibold text-slate-950">{title}</h2>
+          <p className="mt-2 text-sm text-slate-600">{description}</p>
+        </div>
+      ) : null}
 
       {feedback ? (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">

@@ -1,16 +1,24 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { Suspense, use, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { ContainerDetail } from "@dockforge/shared";
-import { useApiQuery } from "../../../lib/api";
-import { formatTimestamp } from "../../../lib/utils";
-import { CopyButton, PageHeader, Panel } from "../../../components/ui";
-import { ContainerTerminalPanel } from "../../../components/container-terminal-panel";
+import { useApiQuery } from "@/lib/api";
+import { formatTimestamp } from "@/lib/utils";
+import { CopyButton, PageHeader, Panel } from "@/components/ui";
+import { ContainerTerminalPanel } from "@/components/container-terminal-panel";
 
 const tabs = ["Overview", "Environment", "Mounts / Volumes", "Networks", "Compose metadata", "Raw inspect", "Terminal"] as const;
 
 export default function ContainerDetailPage({ params }: { params: Promise<{ idOrName: string }> }) {
+  return (
+    <Suspense fallback={<div className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-500">Loading container...</div>}>
+      <ContainerDetailPageContent params={params} />
+    </Suspense>
+  );
+}
+
+function ContainerDetailPageContent({ params }: { params: Promise<{ idOrName: string }> }) {
   const resolvedParams = use(params);
   const searchParams = useSearchParams();
   const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");

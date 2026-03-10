@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "baseUrl": ".",
     "target": "ES2022",
     "module": "ESNext",
     "jsx": "preserve",
@@ -14,6 +15,9 @@
     "types": [
       "node"
     ],
+    "paths": {
+      "@/*": ["./*"]
+    },
     "noEmit": true,
     "isolatedModules": true
   },

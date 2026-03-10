@@ -1,17 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronDown, ChevronRight, Copy, Ellipsis, FileSearch, PlayCircle, Search, Square } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Copy, Ellipsis, FileSearch, PlayCircle, Search, Square } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ContainerLogEntry, ContainerLogsResponse, ContainerSummary, ContainersPageData, Group } from "@dockforge/shared";
 import { buildApiUrl, fetchJson, useApiQuery } from "../../lib/api";
 import { appendLogEntry, trimLogEntries } from "../../lib/container-logs";
 import { getContainerOverflowMenuItems, getPrimaryContainerAction, type PendingContainerAction } from "../../lib/container-row-actions";
-import { PageHeader, Panel, Table, Input, Select, Button, CopyButton, Badge } from "../../components/ui";
-import { StateBadge } from "../../components/status";
+import { PageHeader, Panel, Input, Select, Button, Badge } from "../../components/ui";
 import { shouldShowContainersOnboarding } from "../../lib/onboarding";
-import { getFolderLabel, shortenImageName } from "../../lib/utils";
+import { GroupedContainersTable } from "../../components/grouped-containers-table";
+import { groupContainerRowsByFolder, mapRuntimeContainersToRows } from "../../lib/grouped-containers";
 
 type PendingAction = {
   containerId: string;
@@ -70,8 +70,6 @@ export default function ContainersPage() {
   const [groupId, setGroupId] = useState("");
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [copiedImageForContainerId, setCopiedImageForContainerId] = useState<string | null>(null);
-  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [expandedLogsContainerId, setExpandedLogsContainerId] = useState<string | null>(null);
   const [openMenuContainerId, setOpenMenuContainerId] = useState<string | null>(null);
   const [tourStepIndex, setTourStepIndex] = useState(0);
@@ -114,23 +112,7 @@ export default function ContainersPage() {
 
     return filtered;
   }, [groupId, pageData?.containers, pageData?.runtime.status, search, state]);
-  const groupedContainers = useMemo(() => {
-    const buckets = new Map<string, ContainerSummary[]>();
-
-    for (const container of containers) {
-      const folderLabel = getFolderLabel(container.compose.workingDir);
-      const current = buckets.get(folderLabel) ?? [];
-      current.push(container);
-      buckets.set(folderLabel, current);
-    }
-
-    return [...buckets.entries()]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([folderLabel, containers]) => ({
-        folderLabel,
-        containers: [...containers].sort((left, right) => left.name.localeCompare(right.name)),
-      }));
-  }, [containers]);
+  const groupedContainers = useMemo(() => groupContainerRowsByFolder(mapRuntimeContainersToRows(containers)), [containers]);
   const showContainersOnboarding = shouldShowContainersOnboarding({
     runtimeStatus: pageData?.runtime.status ?? "connected",
     totalContainers: pageData?.containers.length ?? 0,
@@ -191,20 +173,6 @@ export default function ContainersPage() {
       setTourDismissed(false);
     }
   }, [pageData?.onboarding.containersTourSeen]);
-
-  const handleImageCopied = (containerId: string) => {
-    setCopiedImageForContainerId(containerId);
-    window.setTimeout(() => {
-      setCopiedImageForContainerId((current) => (current === containerId ? null : current));
-    }, 2000);
-  };
-
-  const toggleFolder = (folderLabel: string) => {
-    setCollapsedFolders((current) => ({
-      ...current,
-      [folderLabel]: !current[folderLabel],
-    }));
-  };
 
   const toggleLogs = (containerId: string) => {
     setExpandedLogsContainerId((current) => (current === containerId ? null : containerId));
@@ -341,39 +309,88 @@ export default function ContainersPage() {
                 <p className="mt-2 text-sm text-slate-600">Adjust the filters to widen the result set and reveal more live containers.</p>
               </div>
             ) : (
-              <Table>
-                <thead>
-                  <tr className="text-left text-xs uppercase tracking-[0.2em] text-slate-500">
-                    <th className="px-3 py-2">Name</th>
-                    <th className="px-3 py-2">State</th>
-                    <th className="px-3 py-2">Ports</th>
-                    <th className="px-3 py-2">Groups</th>
-                    <th className="px-3 py-2">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {groupedContainers.map((group) => (
-                    <GroupRows
-                      key={group.folderLabel}
-                      folderLabel={group.folderLabel}
-                      containers={group.containers}
-                      isRestarting={isRestarting}
-                      isStopped={isStopped}
-                      isRowPending={isRowPending}
-                      isSpecificActionPending={isSpecificActionPending}
-                      runAction={runAction}
-                      isCollapsed={!!collapsedFolders[group.folderLabel]}
-                      onToggle={() => toggleFolder(group.folderLabel)}
-                      onImageCopied={handleImageCopied}
-                      copiedImageForContainerId={copiedImageForContainerId}
-                      expandedLogsContainerId={expandedLogsContainerId}
-                      onToggleLogs={toggleLogs}
-                      openMenuContainerId={openMenuContainerId}
-                      onToggleMenu={setOpenMenuContainerId}
-                    />
-                  ))}
-                </tbody>
-              </Table>
+              <GroupedContainersTable
+                sections={groupedContainers}
+                emptyState={null}
+                getRowHref={(row) => `/containers/${row.detailTarget}`}
+                renderActions={({ row }) => {
+                  const container = containers.find((item) => item.containerKey === row.containerKey);
+                  if (!container) {
+                    return null;
+                  }
+
+                  const logsOpen = expandedLogsContainerId === container.id;
+                  const pendingRowAction = pendingActionForContainer(container.id, isSpecificActionPending);
+                  const primaryAction = getPrimaryContainerAction({
+                    state: container.state,
+                    isRowPending: isRowPending(container.id),
+                    pendingAction: pendingRowAction,
+                  });
+                  const menuOpen = openMenuContainerId === container.id;
+
+                  return (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        variant={primaryAction.action === "start" ? "success" : "danger"}
+                        className="min-w-[5.75rem]"
+                        disabled={primaryAction.disabled}
+                        onClick={() => void runAction(container, primaryAction.action)}
+                      >
+                        {primaryAction.label}
+                      </Button>
+                      <Button variant={logsOpen ? "secondary" : "ghost"} onClick={() => toggleLogs(container.id)}>
+                        {logsOpen ? "Hide Logs" : "Logs"}
+                      </Button>
+                      <div className="relative" data-container-row-menu-root="true">
+                        <Button
+                          variant="ghost"
+                          aria-label={`Open actions for ${container.name}`}
+                          aria-expanded={menuOpen}
+                          className="h-10 w-10 rounded-2xl px-0"
+                          onClick={() => setOpenMenuContainerId(menuOpen ? null : container.id)}
+                        >
+                          <Ellipsis className="mx-auto h-4 w-4" />
+                        </Button>
+                        {menuOpen ? (
+                          <div className="absolute right-0 top-full z-10 mt-2 w-44 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
+                            <button
+                              type="button"
+                              className="flex w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-45"
+                              disabled={isRowPending(container.id) || isStopped(container) || isRestarting(container)}
+                              onClick={() => {
+                                setOpenMenuContainerId(null);
+                                void runAction(container, "restart");
+                              }}
+                            >
+                              {isSpecificActionPending(container.id, "restart") ? actionLabels.restart.pending : actionLabels.restart.idle}
+                            </button>
+                            {getContainerOverflowMenuItems(container.name)
+                              .filter((item) => item.key === "terminal")
+                              .map((item) => (
+                                <Link
+                                  key={item.key}
+                                  href={item.href}
+                                  className="mt-1 block rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
+                                  onClick={() => setOpenMenuContainerId(null)}
+                                >
+                                  {item.label}
+                                </Link>
+                              ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                }}
+                renderExpandedContent={({ row }) => {
+                  const container = containers.find((item) => item.containerKey === row.containerKey);
+                  if (!container || expandedLogsContainerId !== container.id) {
+                    return null;
+                  }
+
+                  return <ContainerLogsPanel container={container} />;
+                }}
+              />
             )}
           </Panel>
         </>
@@ -549,174 +566,6 @@ const ContainersOnboardingPanel = ({
   );
 };
 
-const GroupRows = ({
-  folderLabel,
-  containers,
-  isRestarting,
-  isStopped,
-  isRowPending,
-  isSpecificActionPending,
-  runAction,
-  isCollapsed,
-  onToggle,
-  onImageCopied,
-  copiedImageForContainerId,
-  expandedLogsContainerId,
-  onToggleLogs,
-  openMenuContainerId,
-  onToggleMenu,
-}: {
-  folderLabel: string;
-  containers: ContainerSummary[];
-  isRestarting: (container: ContainerSummary) => boolean;
-  isStopped: (container: ContainerSummary) => boolean;
-  isRowPending: (containerId: string) => boolean;
-  isSpecificActionPending: (containerId: string, action: PendingAction["action"]) => boolean;
-  runAction: (container: ContainerSummary, action: PendingAction["action"]) => Promise<void>;
-  isCollapsed: boolean;
-  onToggle: () => void;
-  onImageCopied: (containerId: string) => void;
-  copiedImageForContainerId: string | null;
-  expandedLogsContainerId: string | null;
-  onToggleLogs: (containerId: string) => void;
-  openMenuContainerId: string | null;
-  onToggleMenu: (containerId: string | null) => void;
-}) => (
-  <>
-    <tr className="bg-transparent">
-      <td colSpan={5} className="px-3 pb-2 pt-5">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex w-full items-center justify-between border-b border-slate-200 pb-2 text-left"
-        >
-          <div className="flex items-center gap-2">
-            {isCollapsed ? <ChevronRight className="h-4 w-4 text-slate-500" /> : <ChevronDown className="h-4 w-4 text-slate-500" />}
-            <div>
-              <p className="text-sm font-semibold text-slate-900">{folderLabel}</p>
-              <p className="text-xs text-slate-500">
-                {containers.length} container{containers.length === 1 ? "" : "s"}
-              </p>
-            </div>
-          </div>
-        </button>
-      </td>
-    </tr>
-    {!isCollapsed &&
-      containers.map((container) => {
-        const logsOpen = expandedLogsContainerId === container.id;
-        const pendingRowAction = pendingActionForContainer(container.id, isSpecificActionPending);
-        const primaryAction = getPrimaryContainerAction({
-          state: container.state,
-          isRowPending: isRowPending(container.id),
-          pendingAction: pendingRowAction,
-        });
-        const menuOpen = openMenuContainerId === container.id;
-
-        return (
-          <FragmentRows
-            key={container.id}
-            row={
-              <tr className="rounded-2xl bg-slate-50">
-                <td className="px-3 py-4">
-                  <Link href={`/containers/${container.name}`} className="font-medium text-slate-950">
-                    {container.name}
-                  </Link>
-                  <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
-                    <span title={container.image} className="truncate">
-                      {shortenImageName(container.image)}
-                    </span>
-                    <div className="relative flex items-center">
-                      <CopyButton
-                        text={container.image}
-                        label="Copy image URI"
-                        iconOnly
-                        onCopied={() => onImageCopied(container.id)}
-                      />
-                      {copiedImageForContainerId === container.id ? (
-                        <span className="absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap rounded-full bg-emerald-600 px-2 py-1 text-[11px] font-medium text-white shadow-sm">
-                          Image URI copied
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">{container.compose.project ?? folderLabel}</p>
-                </td>
-                <td className="px-3 py-4">
-                  <StateBadge state={container.state} health={container.health} />
-                </td>
-                <td className="px-3 py-4 text-slate-700">{container.ports.map((port) => port.label).join(", ") || "—"}</td>
-                <td className="px-3 py-4 text-slate-700">{container.groupNames.join(", ") || "—"}</td>
-                <td className="px-3 py-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      variant={primaryAction.action === "start" ? "success" : "danger"}
-                      className="min-w-[5.75rem]"
-                      disabled={primaryAction.disabled}
-                      onClick={() => void runAction(container, primaryAction.action)}
-                    >
-                      {primaryAction.label}
-                    </Button>
-                    <Button variant={logsOpen ? "secondary" : "ghost"} onClick={() => onToggleLogs(container.id)}>
-                      {logsOpen ? "Hide Logs" : "Logs"}
-                    </Button>
-                    <div className="relative" data-container-row-menu-root="true">
-                      <Button
-                        variant="ghost"
-                        aria-label={`Open actions for ${container.name}`}
-                        aria-expanded={menuOpen}
-                        className="h-10 w-10 rounded-2xl px-0"
-                        onClick={() => onToggleMenu(menuOpen ? null : container.id)}
-                      >
-                        <Ellipsis className="mx-auto h-4 w-4" />
-                      </Button>
-                      {menuOpen ? (
-                        <div className="absolute right-0 top-full z-10 mt-2 w-44 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
-                          <button
-                            type="button"
-                            className="flex w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-45"
-                            disabled={isRowPending(container.id) || isStopped(container) || isRestarting(container)}
-                            onClick={() => {
-                              onToggleMenu(null);
-                              void runAction(container, "restart");
-                            }}
-                          >
-                            {isSpecificActionPending(container.id, "restart") ? actionLabels.restart.pending : actionLabels.restart.idle}
-                          </button>
-                          {getContainerOverflowMenuItems(container.name)
-                            .filter((item) => item.key === "terminal")
-                            .map((item) => (
-                              <Link
-                                key={item.key}
-                                href={item.href}
-                                className="mt-1 block rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
-                                onClick={() => onToggleMenu(null)}
-                              >
-                                {item.label}
-                              </Link>
-                            ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            }
-            logsRow={
-              logsOpen ? (
-                <tr className="bg-white">
-                  <td colSpan={5} className="px-3 pb-4">
-                    <ContainerLogsPanel container={container} />
-                  </td>
-                </tr>
-              ) : null
-            }
-          />
-        );
-      })}
-  </>
-);
-
 const pendingActionForContainer = (
   containerId: string,
   isSpecificActionPending: (containerId: string, action: PendingAction["action"]) => boolean,
@@ -735,13 +584,6 @@ const pendingActionForContainer = (
 
   return null;
 };
-
-const FragmentRows = ({ row, logsRow }: { row: ReactNode; logsRow: ReactNode }) => (
-  <>
-    {row}
-    {logsRow}
-  </>
-);
 
 const ContainerLogsPanel = ({ container }: { container: ContainerSummary }) => {
   const [tailLines, setTailLines] = useState<number>(200);

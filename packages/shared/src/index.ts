@@ -333,6 +333,41 @@ export const dashboardSchema = z.object({
   groups: z.array(groupSchema),
 });
 
+export const dockerConnectionModeSchema = z.enum(["socket", "host"]);
+
+export const installConfigSchema = z
+  .object({
+    dockerConnectionMode: dockerConnectionModeSchema,
+    dockerSocketPath: z.string().nullable(),
+    dockerHost: z.string().nullable(),
+  })
+  .superRefine((value, context) => {
+    if (value.dockerConnectionMode === "socket" && !(value.dockerSocketPath ?? "").trim()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dockerSocketPath"],
+        message: "Docker socket path is required when socket mode is selected.",
+      });
+    }
+
+    if (value.dockerConnectionMode === "host" && !(value.dockerHost ?? "").trim()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dockerHost"],
+        message: "Docker host is required when host mode is selected.",
+      });
+    }
+  });
+
+export const installStatusSchema = z.object({
+  installCompleted: z.boolean(),
+  persistenceAvailable: z.boolean(),
+  config: installConfigSchema,
+});
+
+export const completeInstallSchema = installConfigSchema;
+export const updateInstallConfigSchema = installConfigSchema;
+
 export const containersRuntimeStatusSchema = z.enum(["connected", "unavailable"]);
 export const containersRuntimeReasonSchema = z.enum(["docker_unavailable", "socket_missing", "connection_failed", "unknown"]);
 
@@ -476,6 +511,9 @@ export type GroupRun = z.infer<typeof groupRunSchema>;
 export type GroupRunStep = z.infer<typeof groupRunStepSchema>;
 export type OrchestrationPlan = z.infer<typeof orchestrationPlanSchema>;
 export type DashboardData = z.infer<typeof dashboardSchema>;
+export type DockerConnectionMode = z.infer<typeof dockerConnectionModeSchema>;
+export type InstallConfig = z.infer<typeof installConfigSchema>;
+export type InstallStatus = z.infer<typeof installStatusSchema>;
 export type ContainersRuntime = z.infer<typeof containersRuntimeSchema>;
 export type ContainersOnboarding = z.infer<typeof containersOnboardingSchema>;
 export type ContainersPageData = z.infer<typeof containersPageDataSchema>;

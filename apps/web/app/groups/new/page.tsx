@@ -1,8 +1,9 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
-import { CreateGroupForm } from "../../../components/forms";
-import { Button, PageHeader } from "../../../components/ui";
+import { CreateGroupForm } from "@/components/forms";
+import { Button, PageHeader } from "@/components/ui";
 
 export default function NewGroupPage() {
   return (
@@ -16,7 +17,9 @@ export default function NewGroupPage() {
           </Link>
         }
       />
-      <CreateGroupForm />
+      <Suspense fallback={<div className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-500">Loading form...</div>}>
+        <CreateGroupForm />
+      </Suspense>
     </div>
   );
 }

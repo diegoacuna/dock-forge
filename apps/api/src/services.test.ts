@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockPrisma = {
+  $transaction: vi.fn(),
   appSetting: {
     findUnique: vi.fn(),
     upsert: vi.fn(),
@@ -41,6 +42,8 @@ describe("containers page services", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.appSetting.findUnique.mockResolvedValue(null);
+    mockPrisma.appSetting.upsert.mockResolvedValue(null);
+    mockPrisma.$transaction.mockImplementation(async (operations: unknown[]) => Promise.all(operations as Promise<unknown>[]));
     mockPrisma.groupContainer.findMany.mockResolvedValue([]);
   });
 
@@ -197,6 +200,73 @@ describe("containers page services", () => {
     await expect(setGroupsTourSeen(true)).rejects.toMatchObject({
       code: "GROUPS_TOUR_PERSISTENCE_UNAVAILABLE",
       message: expect.stringContaining("pnpm db:migrate"),
+    });
+  });
+
+  it("returns install status from persisted app settings", async () => {
+    mockPrisma.appSetting.findUnique
+      .mockResolvedValueOnce({ key: "installCompleted", value: "true" })
+      .mockResolvedValueOnce({ key: "dockerConnectionMode", value: "host" })
+      .mockResolvedValueOnce({ key: "dockerSocketPath", value: "" })
+      .mockResolvedValueOnce({ key: "dockerHost", value: "tcp://127.0.0.1:2375" });
+
+    const { getInstallStatus } = await import("./services.js");
+    const result = await getInstallStatus();
+
+    expect(result).toEqual({
+      installCompleted: true,
+      persistenceAvailable: true,
+      config: {
+        dockerConnectionMode: "host",
+        dockerSocketPath: null,
+        dockerHost: "tcp://127.0.0.1:2375",
+      },
+    });
+  });
+
+  it("persists install completion and docker config in app settings", async () => {
+    const { completeInstall } = await import("./services.js");
+    const result = await completeInstall({
+      dockerConnectionMode: "socket",
+      dockerSocketPath: "/custom/docker.sock",
+      dockerHost: null,
+    });
+
+    expect(mockPrisma.$transaction).toHaveBeenCalled();
+    expect(mockPrisma.appSetting.upsert).toHaveBeenCalledWith({
+      where: { key: "installCompleted" },
+      update: { value: "true" },
+      create: { key: "installCompleted", value: "true" },
+    });
+    expect(mockPrisma.appSetting.upsert).toHaveBeenCalledWith({
+      where: { key: "dockerConnectionMode" },
+      update: { value: "socket" },
+      create: { key: "dockerConnectionMode", value: "socket" },
+    });
+    expect(mockPrisma.appSetting.upsert).toHaveBeenCalledWith({
+      where: { key: "dockerSocketPath" },
+      update: { value: "/custom/docker.sock" },
+      create: { key: "dockerSocketPath", value: "/custom/docker.sock" },
+    });
+    expect(result).toEqual({
+      installCompleted: true,
+      persistenceAvailable: true,
+      config: {
+        dockerConnectionMode: "socket",
+        dockerSocketPath: "/custom/docker.sock",
+        dockerHost: null,
+      },
+    });
+  });
+
+  it("falls back to env-backed docker defaults when install config is absent", async () => {
+    const { readEffectiveDockerConnectionConfig } = await import("./services.js");
+    const result = await readEffectiveDockerConnectionConfig();
+
+    expect(result).toEqual({
+      dockerConnectionMode: "socket",
+      dockerSocketPath: "/var/run/docker.sock",
+      dockerHost: null,
     });
   });
 });
