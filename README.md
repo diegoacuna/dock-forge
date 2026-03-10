@@ -116,7 +116,8 @@ Type=simple
 User=YOUR_UBUNTU_USER
 WorkingDirectory=/absolute/path/to/dock-forge
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/env pnpm start
+Environment=PATH=/path/to/node/bin:/path/to/pnpm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/absolute/path/to/pnpm start
 Restart=always
 RestartSec=5
 
@@ -143,6 +144,7 @@ sudo systemctl stop dockforge
 ```
 
 This keeps DockForge running after you close the terminal, restarts it automatically if the process exits, and can start it automatically on boot.
+If you installed Node.js or pnpm through `nvm`, `corepack`, or another user-local toolchain, use absolute binary paths or an explicit `PATH` in the service so `systemd` can find them.
 
 If you only need a temporary background process, you can still use:
 

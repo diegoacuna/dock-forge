@@ -17,6 +17,9 @@ DOCKER_HOST=""
 DATABASE_PATH=""
 NEXT_PUBLIC_API_BASE_URL=""
 ENV_BACKUP_PATH=""
+NODE_BIN=""
+PNPM_BIN=""
+SYSTEMD_PATH_VALUE=""
 IS_UBUNTU=0
 HAS_SYSTEMD=0
 CAN_MANAGE_SYSTEMD=0
@@ -110,6 +113,13 @@ require_command() {
   command -v "$command_name" >/dev/null 2>&1
 }
 
+build_systemd_path() {
+  local node_dir="$1"
+  local pnpm_dir="$2"
+  local path_value="$node_dir:$pnpm_dir:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  awk -v RS=: '!seen[$0]++ { if (NR > 1) printf ":"; printf "%s", $0 }' <<<"$path_value"
+}
+
 check_prerequisites() {
   box "DockForge Installer"
   note "This will set up DockForge with a friendly guided flow."
@@ -196,6 +206,10 @@ check_prerequisites() {
   else
     ok "Node.js version is suitable for self-contained SQLite migrations"
   fi
+
+  NODE_BIN="$(command -v node)"
+  PNPM_BIN="$(command -v pnpm)"
+  SYSTEMD_PATH_VALUE="$(build_systemd_path "$(dirname "$NODE_BIN")" "$(dirname "$PNPM_BIN")")"
 }
 
 collect_configuration() {
@@ -329,7 +343,8 @@ Type=simple
 User=$runner_user
 WorkingDirectory=$REPO_ROOT
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/env pnpm start
+Environment=PATH=$SYSTEMD_PATH_VALUE
+ExecStart=$PNPM_BIN start
 Restart=always
 RestartSec=5
 
