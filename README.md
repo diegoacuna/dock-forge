@@ -44,6 +44,7 @@ DockForge is not the Docker host. It connects to your existing local Docker Engi
 3. On first launch, DockForge opens an install page and stores the chosen Docker connection mode in the app database. Environment values remain the fallback before install is completed.
 
 If you want a guided setup instead of handling each step manually, run `./install.sh` from the repo root. It checks prerequisites, writes `.env`, installs dependencies, applies migrations, completes the first-run install state, and can offer a `systemd` service on Ubuntu.
+For upgrades on an existing production install, use `./update.sh` after you update the checkout. It preserves the current `.env`, applies dependency and schema changes, rebuilds the app, and restarts the service only after the update succeeds.
 
 Default local values:
 
@@ -191,13 +192,21 @@ When `DATABASE_URL` uses a relative SQLite path, Prisma resolves it relative to 
 
 ## Upgrade Flow
 
-When you pull new changes into an existing clone:
+When you pull new changes into an existing production clone:
+
+1. Update the checkout separately using your usual release flow.
+2. Run `./update.sh`.
+3. Let the script apply dependencies, regenerate the Prisma client, run migrations, rebuild the workspace, and restart DockForge when a managed `systemd` service is present.
+
+`./update.sh` is intentionally for an already-installed instance. It requires an existing root `.env` and existing SQLite database, does not call install completion again, and does not rewrite Docker connection settings.
+
+Manual fallback:
 
 1. `pnpm install`
 2. `pnpm db:generate`
 3. `pnpm db:migrate`
 4. `pnpm build`
-5. restart `pnpm start`
+5. restart DockForge with either `sudo systemctl restart dockforge` or `pnpm start`, depending on how you run it
 
 ## Troubleshooting
 
