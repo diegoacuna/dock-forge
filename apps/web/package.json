@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "sh -ac 'next dev -H \"${WEB_HOST:-0.0.0.0}\" -p \"${WEB_PORT:-3000}\"'",
     "build": "next build",
-    "start": "next start",
+    "start": "sh -ac 'next start -H \"${WEB_HOST:-0.0.0.0}\" -p \"${WEB_PORT:-3000}\"'",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "lint": "next lint"
