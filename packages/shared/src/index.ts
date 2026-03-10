@@ -297,6 +297,15 @@ export const orchestrationPlanSchema = z.object({
   orderedGroupContainerIds: z.array(z.string()),
 });
 
+export const groupRunStepMetadataSchema = z.object({
+  noopReason: z.string().nullable().optional(),
+  runtimeStateBefore: containerStateSchema.nullable().optional(),
+  runtimeStateAfter: containerStateSchema.nullable().optional(),
+  exitCode: z.number().int().nullable().optional(),
+  exitReason: z.string().nullable().optional(),
+  oomKilled: z.boolean().nullable().optional(),
+});
+
 export const groupRunStepSchema = z.object({
   id: z.string(),
   groupRunId: z.string(),
@@ -309,6 +318,7 @@ export const groupRunStepSchema = z.object({
   startedAt: z.string(),
   completedAt: z.string().nullable(),
   metadataJson: z.string().nullable(),
+  metadata: groupRunStepMetadataSchema.nullable().default(null),
 });
 
 export const groupRunSchema = z.object({
@@ -478,6 +488,11 @@ export const orchestrationExecuteSchema = z.object({
   targetGroupContainerId: z.string().nullable().optional(),
 });
 
+export const groupActionLaunchSchema = z.object({
+  runId: z.string(),
+  run: groupRunSchema,
+});
+
 export const listContainersQuerySchema = z.object({
   state: z.string().optional(),
   search: z.string().optional(),
@@ -509,7 +524,9 @@ export type GroupExecutionStage = z.infer<typeof groupExecutionStageSchema>;
 export type GroupDetail = z.infer<typeof groupDetailSchema>;
 export type GroupRun = z.infer<typeof groupRunSchema>;
 export type GroupRunStep = z.infer<typeof groupRunStepSchema>;
+export type GroupRunStepMetadata = z.infer<typeof groupRunStepMetadataSchema>;
 export type OrchestrationPlan = z.infer<typeof orchestrationPlanSchema>;
+export type GroupActionLaunch = z.infer<typeof groupActionLaunchSchema>;
 export type DashboardData = z.infer<typeof dashboardSchema>;
 export type DockerConnectionMode = z.infer<typeof dockerConnectionModeSchema>;
 export type InstallConfig = z.infer<typeof installConfigSchema>;

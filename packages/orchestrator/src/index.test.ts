@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { buildPlan, reverseTopologicalLayers, topologicalLayers, validateGraph } from "./index.js";
+import { describe, expect, it, vi } from "vitest";
+import { buildPlan, executePlan, reverseTopologicalLayers, topologicalLayers, validateGraph } from "./index.js";
 
 const members = [
   {
@@ -110,5 +110,164 @@ describe("orchestrator graph", () => {
   it("builds stop plan in reverse order", () => {
     const plan = buildPlan("STOP", "group-1", members, edges);
     expect(plan.layers.map((layer) => layer.members.map((member) => member.id))).toEqual([["web"], ["migrate"], ["db"]]);
+  });
+});
+
+describe("orchestrator execution", () => {
+  const createLogger = () => ({
+    markRunRunning: vi.fn().mockResolvedValue(undefined),
+    markRunCompleted: vi.fn().mockResolvedValue(undefined),
+    createRunStep: vi.fn().mockResolvedValue("step-id"),
+    completeRunStep: vi.fn().mockResolvedValue(undefined),
+  });
+
+  it("marks already running start targets as skipped", async () => {
+    const logger = createLogger();
+    const plan = buildPlan("START", "group-1", [members[0]], []);
+
+    await executePlan({
+      runId: "run-1",
+      plan,
+      targets: new Map([
+        [
+          "db",
+          {
+            member: members[0],
+            runtimeId: "docker-db",
+            runtimeName: "postgres",
+          },
+        ],
+      ]),
+      runtime: {
+        startContainer: vi.fn().mockResolvedValue({
+          outcome: "skipped",
+          message: "Container docker-db is already running",
+          metadata: {
+            noopReason: "already_running",
+            runtimeStateBefore: "running",
+            runtimeStateAfter: "running",
+          },
+        }),
+        stopContainer: vi.fn(),
+        waitForReady: vi.fn().mockResolvedValue({
+          status: "ready",
+          reason: "running",
+          metadata: {
+            runtimeStateAfter: "running",
+          },
+        }),
+      },
+      logger,
+    });
+
+    expect(logger.completeRunStep).toHaveBeenCalledWith(
+      "step-id",
+      expect.objectContaining({
+        status: "SKIPPED",
+        metadata: expect.objectContaining({ noopReason: "already_running" }),
+      }),
+    );
+  });
+
+  it("does not fail when readiness completes via exit code 0", async () => {
+    const logger = createLogger();
+    logger.createRunStep.mockResolvedValueOnce("start-step").mockResolvedValueOnce("wait-step");
+    const plan = buildPlan("START", "group-1", [members[0]], []);
+
+    await executePlan({
+      runId: "run-2",
+      plan,
+      targets: new Map([
+        [
+          "db",
+          {
+            member: members[0],
+            runtimeId: "docker-db",
+            runtimeName: "postgres",
+          },
+        ],
+      ]),
+      runtime: {
+        startContainer: vi.fn().mockResolvedValue({
+          outcome: "performed",
+          message: "Container docker-db started",
+          metadata: {
+            runtimeStateBefore: "created",
+            runtimeStateAfter: "running",
+          },
+        }),
+        stopContainer: vi.fn(),
+        waitForReady: vi.fn().mockResolvedValue({
+          status: "completed",
+          reason: "exited",
+          metadata: {
+            runtimeStateBefore: "exited",
+            runtimeStateAfter: "exited",
+            exitCode: 0,
+            exitReason: "exited",
+            oomKilled: false,
+          },
+        }),
+      },
+      logger,
+    });
+
+    expect(logger.markRunCompleted).toHaveBeenCalledWith(
+      "run-2",
+      "SUCCEEDED",
+      expect.objectContaining({ action: "START" }),
+    );
+  });
+
+  it("fails when readiness returns a non-zero exit code", async () => {
+    const logger = createLogger();
+    logger.createRunStep.mockResolvedValueOnce("start-step").mockResolvedValueOnce("wait-step");
+    const plan = buildPlan("START", "group-1", [members[0]], []);
+
+    await expect(
+      executePlan({
+        runId: "run-3",
+        plan,
+        targets: new Map([
+          [
+            "db",
+            {
+              member: members[0],
+              runtimeId: "docker-db",
+              runtimeName: "postgres",
+            },
+          ],
+        ]),
+        runtime: {
+          startContainer: vi.fn().mockResolvedValue({
+            outcome: "performed",
+            message: "Container docker-db started",
+            metadata: {
+              runtimeStateBefore: "created",
+              runtimeStateAfter: "running",
+            },
+          }),
+          stopContainer: vi.fn(),
+          waitForReady: vi.fn().mockResolvedValue({
+            status: "failed",
+            reason: "process exited with code 1",
+            metadata: {
+              runtimeStateBefore: "exited",
+              runtimeStateAfter: "exited",
+              exitCode: 1,
+              exitReason: "process exited with code 1",
+              oomKilled: false,
+            },
+          }),
+        },
+        logger,
+      }),
+    ).rejects.toThrow("Readiness failed");
+
+    expect(logger.markRunCompleted).toHaveBeenCalledWith(
+      "run-3",
+      "FAILED",
+      expect.objectContaining({ action: "START" }),
+    );
   });
 });

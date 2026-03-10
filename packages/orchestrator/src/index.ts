@@ -1,4 +1,4 @@
-import type { GroupContainer, OrchestrationPlan } from "@dockforge/shared";
+import type { GroupContainer, GroupRunStepMetadata, OrchestrationPlan } from "@dockforge/shared";
 
 export type GraphNode = Pick<GroupContainer, "id" | "groupId" | "includeInStartAll" | "includeInStopAll">;
 export type GraphEdge = {
@@ -218,6 +218,18 @@ type RuntimeTarget = {
   runtimeName: string;
 };
 
+type RuntimeActionResult = {
+  outcome: "performed" | "skipped";
+  message: string;
+  metadata: GroupRunStepMetadata;
+};
+
+type RuntimeWaitResult = {
+  status: "ready" | "completed" | "failed";
+  reason: string;
+  metadata: GroupRunStepMetadata;
+};
+
 export type ExecutionLogger = {
   markRunRunning(runId: string): Promise<void>;
   markRunCompleted(runId: string, status: "SUCCEEDED" | "FAILED", summary: Record<string, unknown>): Promise<void>;
@@ -237,9 +249,9 @@ export type ExecutionLogger = {
 };
 
 export type RuntimeExecutor = {
-  startContainer(idOrName: string): Promise<void>;
-  stopContainer(idOrName: string): Promise<void>;
-  waitForReady(idOrName: string, options?: { timeoutMs?: number }): Promise<{ ready: boolean; reason: string }>;
+  startContainer(idOrName: string): Promise<RuntimeActionResult>;
+  stopContainer(idOrName: string): Promise<RuntimeActionResult>;
+  waitForReady(idOrName: string, options?: { timeoutMs?: number }): Promise<RuntimeWaitResult>;
 };
 
 export const executePlan = async ({
@@ -248,14 +260,18 @@ export const executePlan = async ({
   targets,
   runtime,
   logger,
+  manageRunState = true,
 }: {
   runId: string;
   plan: OrchestrationPlan;
   targets: Map<string, RuntimeTarget>;
   runtime: RuntimeExecutor;
   logger: ExecutionLogger;
+  manageRunState?: boolean;
 }) => {
-  await logger.markRunRunning(runId);
+  if (manageRunState) {
+    await logger.markRunRunning(runId);
+  }
 
   try {
     for (const layer of plan.layers) {
@@ -284,15 +300,12 @@ export const executePlan = async ({
         });
 
         try {
-          if (action === "STOP") {
-            await runtime.stopContainer(target.runtimeId);
-          } else {
-            await runtime.startContainer(target.runtimeId);
-          }
+          const actionResult = action === "STOP" ? await runtime.stopContainer(target.runtimeId) : await runtime.startContainer(target.runtimeId);
 
           await logger.completeRunStep(stepId, {
-            status: "SUCCEEDED",
-            message: `${action} completed`,
+            status: actionResult.outcome === "skipped" ? "SKIPPED" : "SUCCEEDED",
+            message: actionResult.message,
+            metadata: actionResult.metadata,
           });
         } catch (error) {
           await logger.completeRunStep(stepId, {
@@ -313,26 +326,31 @@ export const executePlan = async ({
 
           const readiness = await runtime.waitForReady(target.runtimeId);
           await logger.completeRunStep(waitStepId, {
-            status: readiness.ready ? "SUCCEEDED" : "FAILED",
+            status: readiness.status === "failed" ? "FAILED" : "SUCCEEDED",
             message: readiness.reason,
+            metadata: readiness.metadata,
           });
 
-          if (!readiness.ready) {
+          if (readiness.status === "failed") {
             throw new Error(`Readiness failed for ${target.runtimeName}: ${readiness.reason}`);
           }
         }
       }
     }
 
-    await logger.markRunCompleted(runId, "SUCCEEDED", {
-      action: plan.action,
-      completedMembers: plan.orderedGroupContainerIds,
-    });
+    if (manageRunState) {
+      await logger.markRunCompleted(runId, "SUCCEEDED", {
+        action: plan.action,
+        completedMembers: plan.orderedGroupContainerIds,
+      });
+    }
   } catch (error) {
-    await logger.markRunCompleted(runId, "FAILED", {
-      action: plan.action,
-      failed: error instanceof Error ? error.message : "Unknown execution failure",
-    });
+    if (manageRunState) {
+      await logger.markRunCompleted(runId, "FAILED", {
+        action: plan.action,
+        failed: error instanceof Error ? error.message : "Unknown execution failure",
+      });
+    }
     throw error;
   }
 };

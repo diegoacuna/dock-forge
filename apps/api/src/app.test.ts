@@ -432,6 +432,53 @@ describe("group routes", () => {
     vi.clearAllMocks();
   });
 
+  it("returns a pending run launch payload for start actions", async () => {
+    const services = await import("./services.js");
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+
+    vi.mocked(services.executeGroupAction).mockResolvedValue({
+      runId: "run-1",
+      run: {
+        id: "run-1",
+        groupId: "group-1",
+        action: "START",
+        status: "PENDING",
+        startedAt: "2026-03-10T12:00:00.000Z",
+        completedAt: null,
+        summaryJson: null,
+        steps: [],
+      },
+    } as never);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/groups/group-1/start",
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(services.executeGroupAction).toHaveBeenCalledWith({
+      groupId: "group-1",
+      action: "START",
+    });
+    expect(response.json()).toEqual({
+      runId: "run-1",
+      run: {
+        id: "run-1",
+        groupId: "group-1",
+        action: "START",
+        status: "PENDING",
+        startedAt: "2026-03-10T12:00:00.000Z",
+        completedAt: null,
+        summaryJson: null,
+        steps: [],
+      },
+    });
+
+    await app.close();
+  });
+
   it("accepts bulk container attach payloads", async () => {
     const services = await import("./services.js");
     const { buildApp } = await import("./app.js");

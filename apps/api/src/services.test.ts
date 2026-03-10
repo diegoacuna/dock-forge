@@ -8,12 +8,17 @@ const mockPrisma = {
   },
   group: {
     findMany: vi.fn(),
+    findUniqueOrThrow: vi.fn(),
   },
   groupRun: {
     findMany: vi.fn(),
+    create: vi.fn(),
+    findUniqueOrThrow: vi.fn(),
+    update: vi.fn(),
   },
   groupContainer: {
     findMany: vi.fn(),
+    update: vi.fn(),
   },
 };
 
@@ -45,6 +50,8 @@ describe("containers page services", () => {
     mockPrisma.appSetting.upsert.mockResolvedValue(null);
     mockPrisma.$transaction.mockImplementation(async (operations: unknown[]) => Promise.all(operations as Promise<unknown>[]));
     mockPrisma.groupContainer.findMany.mockResolvedValue([]);
+    mockPrisma.groupContainer.update.mockResolvedValue(null);
+    mockPrisma.groupRun.update.mockResolvedValue(null);
   });
 
   it("returns connected runtime state when docker containers are available", async () => {
@@ -267,6 +274,114 @@ describe("containers page services", () => {
       dockerConnectionMode: "socket",
       dockerSocketPath: "/var/run/docker.sock",
       dockerHost: null,
+    });
+  });
+
+  it("launches group actions asynchronously and returns the pending run id", async () => {
+    const dockerRuntime = await import("@dockforge/docker-runtime");
+    const orchestrator = await import("@dockforge/orchestrator");
+
+    vi.mocked(orchestrator.buildPlan).mockReturnValue({
+      action: "START",
+      targetGroupId: "group-1",
+      targetGroupContainerId: null,
+      layers: [],
+      orderedGroupContainerIds: [],
+    });
+    vi.mocked(orchestrator.executePlan).mockResolvedValue(undefined);
+    vi.mocked(dockerRuntime.resolveContainerByKey).mockResolvedValue({
+      id: "docker-1",
+      name: "api-1",
+      containerKey: "api",
+    } as never);
+    dockerState.listContainers.mockResolvedValue([
+      {
+        id: "docker-1",
+        containerKey: "api",
+        name: "api-1",
+        image: "ghcr.io/acme/api:latest",
+        imageId: "sha256:123",
+        state: "running",
+        status: "Up 2 minutes",
+        health: "healthy",
+        createdAt: "2026-03-10T12:00:00.000Z",
+        ports: [],
+        compose: {
+          project: "dock-forge",
+          service: "api",
+          workingDir: "/workspace/app",
+          configFiles: [],
+          rawLabels: {},
+        },
+        groupIds: [],
+        groupNames: [],
+      },
+    ]);
+    mockPrisma.group.findUniqueOrThrow.mockResolvedValue({
+      id: "group-1",
+      name: "Core Stack",
+      slug: "core-stack",
+      description: null,
+      color: null,
+      createdAt: new Date("2026-03-10T12:00:00.000Z"),
+      updatedAt: new Date("2026-03-10T12:00:00.000Z"),
+      containers: [
+        {
+          id: "group-container-1",
+          groupId: "group-1",
+          containerKey: "api",
+          containerNameSnapshot: "api-1",
+          folderLabelSnapshot: "app",
+          lastResolvedDockerId: "docker-1",
+          aliasName: null,
+          notes: null,
+          includeInStartAll: true,
+          includeInStopAll: true,
+          createdAt: new Date("2026-03-10T12:00:00.000Z"),
+          updatedAt: new Date("2026-03-10T12:00:00.000Z"),
+        },
+      ],
+      edges: [],
+      graphLayouts: [],
+      executionFolders: [],
+      runs: [],
+    });
+    mockPrisma.groupRun.create.mockResolvedValue({
+      id: "run-1",
+      groupId: "group-1",
+      action: "START",
+      status: "PENDING",
+      startedAt: new Date("2026-03-10T12:00:00.000Z"),
+    });
+    mockPrisma.groupRun.findUniqueOrThrow.mockResolvedValue({
+      id: "run-1",
+      groupId: "group-1",
+      action: "START",
+      status: "PENDING",
+      startedAt: new Date("2026-03-10T12:00:00.000Z"),
+      completedAt: null,
+      summaryJson: null,
+      steps: [],
+    });
+
+    const { executeGroupAction } = await import("./services.js");
+    const result = await executeGroupAction({
+      groupId: "group-1",
+      action: "START",
+    });
+
+    expect(result).toEqual({
+      runId: "run-1",
+      run: {
+        id: "run-1",
+        groupId: "group-1",
+        action: "START",
+        status: "PENDING",
+        startedAt: "2026-03-10T12:00:00.000Z",
+        completedAt: null,
+        summaryJson: null,
+        steps: [],
+      },
     });
   });
 });

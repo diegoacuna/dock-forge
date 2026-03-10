@@ -15,10 +15,13 @@ import {
   type GroupExecutionStage,
   type GroupContainer as GroupContainerDto,
   type GroupDetail,
+  groupRunStepMetadataSchema,
+  type GroupActionLaunch,
   type InstallConfig,
   type InstallStatus,
   type GroupRun,
   type GroupRunStep,
+  type GroupRunStepMetadata,
 } from "@dockforge/shared";
 import { buildPlan, executePlan, validateGraph, type GraphEdge } from "@dockforge/orchestrator";
 import { config } from "./config.js";
@@ -276,8 +279,8 @@ type RuntimeDockerClient = {
     options: Parameters<DockerRuntimeClient["openContainerTerminal"]>[1],
     callbacks: Parameters<DockerRuntimeClient["openContainerTerminal"]>[2],
   ) => Promise<Awaited<ReturnType<DockerRuntimeClient["openContainerTerminal"]>>>;
-  startContainer: (idOrName: string) => Promise<void>;
-  stopContainer: (idOrName: string) => Promise<void>;
+  startContainer: (idOrName: string) => Promise<Awaited<ReturnType<DockerRuntimeClient["startContainer"]>>>;
+  stopContainer: (idOrName: string) => Promise<Awaited<ReturnType<DockerRuntimeClient["stopContainer"]>>>;
   restartContainer: (idOrName: string) => Promise<void>;
   waitForReady: (
     idOrName: string,
@@ -625,6 +628,18 @@ const buildExecutionEdges = (
   return edges;
 };
 
+const parseRunStepMetadata = (metadataJson: string | null): GroupRunStepMetadata | null => {
+  if (!metadataJson) {
+    return null;
+  }
+
+  try {
+    return groupRunStepMetadataSchema.parse(JSON.parse(metadataJson));
+  } catch {
+    return null;
+  }
+};
+
 const mapGroupRunStep = (step: {
   id: string;
   groupRunId: string;
@@ -649,6 +664,7 @@ const mapGroupRunStep = (step: {
   startedAt: step.startedAt.toISOString(),
   completedAt: formatDate(step.completedAt),
   metadataJson: step.metadataJson,
+  metadata: parseRunStepMetadata(step.metadataJson),
 });
 
 const mapGroupRun = (run: {
@@ -983,6 +999,98 @@ const createRunLogger = () => ({
   },
 });
 
+const fetchRunWithSteps = async (runId: string) =>
+  prisma.groupRun.findUniqueOrThrow({
+    where: { id: runId },
+    include: {
+      steps: {
+        orderBy: { startedAt: "asc" },
+      },
+    },
+  });
+
+const resolveGroupRuntimeTargets = async (members: GroupContainerDto[]) => {
+  const targets = new Map<string, { member: GroupContainerDto; runtimeId: string; runtimeName: string }>();
+
+  for (const member of members) {
+    const resolved = await resolveContainerByKey(dockerClient, member.containerKey, member.lastResolvedDockerId);
+    if (!resolved) {
+      continue;
+    }
+
+    targets.set(member.id, {
+      member,
+      runtimeId: resolved.id,
+      runtimeName: resolved.name,
+    });
+
+    await prisma.groupContainer.update({
+      where: { id: member.id },
+      data: {
+        lastResolvedDockerId: resolved.id,
+        containerNameSnapshot: resolved.name,
+      },
+    });
+  }
+
+  return targets;
+};
+
+const runGroupActionInBackground = async ({
+  runId,
+  groupId,
+  action,
+  targetGroupContainerId,
+}: {
+  runId: string;
+  groupId: string;
+  action: "START" | "STOP" | "RESTART" | "START_CLEAN";
+  targetGroupContainerId?: string | null;
+}) => {
+  const logger = createRunLogger();
+
+  try {
+    const group = await getGroupDetail(groupId);
+    const graphEdges = buildExecutionEdges(groupId, group.containers, group.executionFolders);
+    const actionForPlan = action === "RESTART" || action === "START_CLEAN" ? "START" : action;
+    const plan = buildPlan(actionForPlan, groupId, group.containers, graphEdges, targetGroupContainerId ?? null);
+    const targets = await resolveGroupRuntimeTargets(group.containers);
+
+    await logger.markRunRunning(runId);
+
+    if (action === "START_CLEAN" || action === "RESTART") {
+      const stopPlan = buildPlan("STOP", groupId, group.containers, graphEdges, targetGroupContainerId ?? null);
+      await executePlan({
+        runId,
+        plan: stopPlan,
+        targets,
+        runtime: dockerClient,
+        logger,
+        manageRunState: false,
+      });
+    }
+
+    await executePlan({
+      runId,
+      plan,
+      targets,
+      runtime: dockerClient,
+      logger,
+      manageRunState: false,
+    });
+
+    await logger.markRunCompleted(runId, "SUCCEEDED", {
+      action,
+      completedMembers: plan.orderedGroupContainerIds,
+    });
+  } catch (error) {
+    await logger.markRunCompleted(runId, "FAILED", {
+      action,
+      failed: error instanceof Error ? error.message : "Unknown execution failure",
+    });
+  }
+};
+
 export const executeGroupAction = async ({
   groupId,
   action,
@@ -993,7 +1101,7 @@ export const executeGroupAction = async ({
   action: "START" | "STOP" | "RESTART" | "START_CLEAN";
   dryRun?: boolean;
   targetGroupContainerId?: string | null;
-}) => {
+}): Promise<GroupActionLaunch | { dryRun: true; plan: ReturnType<typeof buildPlan> }> => {
   const group = await getGroupDetail(groupId);
   const graphEdges = buildExecutionEdges(groupId, group.containers, group.executionFolders);
 
@@ -1016,73 +1124,19 @@ export const executeGroupAction = async ({
     },
   });
 
-  const resolveTargets = async () => {
-    const targets = new Map<string, { member: GroupContainerDto; runtimeId: string; runtimeName: string }>();
-
-    for (const member of group.containers) {
-      const resolved = await resolveContainerByKey(dockerClient, member.containerKey, member.lastResolvedDockerId);
-      if (resolved) {
-        targets.set(member.id, {
-          member,
-          runtimeId: resolved.id,
-          runtimeName: resolved.name,
-        });
-
-        await prisma.groupContainer.update({
-          where: { id: member.id },
-          data: {
-            lastResolvedDockerId: resolved.id,
-            containerNameSnapshot: resolved.name,
-          },
-        });
-      }
-    }
-
-    return targets;
-  };
-
-  const targets = await resolveTargets();
-
-  if (action === "START_CLEAN") {
-    const stopPlan = buildPlan("STOP", groupId, group.containers, graphEdges, targetGroupContainerId ?? null);
-    await executePlan({
-      runId: run.id,
-      plan: stopPlan,
-      targets,
-      runtime: dockerClient,
-      logger: createRunLogger(),
-    });
-  }
-
-  if (action === "RESTART") {
-    const stopPlan = buildPlan("STOP", groupId, group.containers, graphEdges, targetGroupContainerId ?? null);
-    await executePlan({
-      runId: run.id,
-      plan: stopPlan,
-      targets,
-      runtime: dockerClient,
-      logger: createRunLogger(),
-    });
-  }
-
-  await executePlan({
+  void runGroupActionInBackground({
     runId: run.id,
-    plan,
-    targets,
-    runtime: dockerClient,
-    logger: createRunLogger(),
+    groupId,
+    action,
+    targetGroupContainerId,
   });
 
-  const completedRun = await prisma.groupRun.findUniqueOrThrow({
-    where: { id: run.id },
-    include: {
-      steps: {
-        orderBy: { startedAt: "asc" },
-      },
-    },
-  });
+  const pendingRun = await fetchRunWithSteps(run.id);
 
-  return mapGroupRun(completedRun);
+  return {
+    runId: run.id,
+    run: mapGroupRun(pendingRun),
+  };
 };
 
 export const listGroupRuns = async (groupId: string) => {

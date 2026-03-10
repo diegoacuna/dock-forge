@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   completeInstallSchema,
   containersPageDataSchema,
+  groupActionLaunchSchema,
   containersTourUpdateSchema,
+  groupRunStepSchema,
   groupsPageDataSchema,
   groupsTourUpdateSchema,
 } from "./index";
@@ -102,5 +104,58 @@ describe("containers page schemas", () => {
     expect(groupsTourUpdateSchema.parse({ groupsTourSeen: true })).toEqual({
       groupsTourSeen: true,
     });
+  });
+
+  it("accepts structured group run step metadata", () => {
+    expect(
+      groupRunStepSchema.parse({
+        id: "step-1",
+        groupRunId: "run-1",
+        groupContainerId: "group-container-1",
+        containerKey: "api",
+        containerNameSnapshot: "api-1",
+        action: "START",
+        status: "SKIPPED",
+        message: "Container api is already running",
+        startedAt: "2026-03-10T12:00:00.000Z",
+        completedAt: "2026-03-10T12:00:01.000Z",
+        metadataJson: "{\"noopReason\":\"already_running\"}",
+        metadata: {
+          noopReason: "already_running",
+          runtimeStateBefore: "running",
+          runtimeStateAfter: "running",
+        },
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        metadata: {
+          noopReason: "already_running",
+          runtimeStateBefore: "running",
+          runtimeStateAfter: "running",
+        },
+      }),
+    );
+  });
+
+  it("accepts the group action launch payload shape", () => {
+    expect(
+      groupActionLaunchSchema.parse({
+        runId: "run-1",
+        run: {
+          id: "run-1",
+          groupId: "group-1",
+          action: "START",
+          status: "PENDING",
+          startedAt: "2026-03-10T12:00:00.000Z",
+          completedAt: null,
+          summaryJson: null,
+          steps: [],
+        },
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        runId: "run-1",
+      }),
+    );
   });
 });

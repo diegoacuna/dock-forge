@@ -10,6 +10,7 @@ import {
   type ContainerOverview,
   type ContainerSummary,
   type ContainerState,
+  type GroupRunStepMetadata,
   type NetworkDetail,
   type NetworkSummary,
   type TerminalShell,
@@ -25,6 +26,18 @@ export type DockerConnectionConfig = {
 type WaitOptions = {
   timeoutMs?: number;
   intervalMs?: number;
+};
+
+type ContainerActionResult = {
+  outcome: "performed" | "skipped";
+  message: string;
+  metadata: GroupRunStepMetadata;
+};
+
+type WaitForReadyResult = {
+  status: "ready" | "completed" | "failed";
+  reason: string;
+  metadata: GroupRunStepMetadata;
 };
 
 type LogStream = "stdout" | "stderr";
@@ -78,6 +91,14 @@ const parseHealth = (inspect: Partial<ContainerInspectInfo> | undefined) => {
 
   return health;
 };
+
+const extractContainerStateSnapshot = (inspect: Partial<ContainerInspectInfo> | undefined): GroupRunStepMetadata => ({
+  runtimeStateBefore: ((inspect?.State?.Status as ContainerState | undefined) ?? null) as GroupRunStepMetadata["runtimeStateBefore"],
+  runtimeStateAfter: ((inspect?.State?.Status as ContainerState | undefined) ?? null) as GroupRunStepMetadata["runtimeStateAfter"],
+  exitCode: inspect?.State?.ExitCode ?? null,
+  exitReason: inspect?.State?.Error || inspect?.State?.Status || null,
+  oomKilled: inspect?.State?.OOMKilled ?? null,
+});
 
 const inferHealthFromStatusText = (status: string | undefined) => {
   const lower = status?.toLowerCase() ?? "";
@@ -558,11 +579,69 @@ export class DockerRuntimeClient {
   }
 
   async startContainer(idOrName: string) {
-    await this.docker.getContainer(idOrName).start();
+    const container = await this.resolveContainer(idOrName);
+    const before = await container.inspect();
+    const stateBefore = (before.State?.Status as ContainerState | undefined) ?? "unknown";
+
+    if (stateBefore === "running") {
+      return {
+        outcome: "skipped",
+        message: `Container ${idOrName} is already running`,
+        metadata: {
+          noopReason: "already_running",
+          runtimeStateBefore: stateBefore,
+          runtimeStateAfter: stateBefore,
+        },
+      } satisfies ContainerActionResult;
+    }
+
+    await container.start();
+    const after = await container.inspect();
+
+    return {
+      outcome: "performed",
+      message: `Container ${idOrName} started`,
+      metadata: {
+        runtimeStateBefore: stateBefore,
+        runtimeStateAfter: ((after.State?.Status as ContainerState | undefined) ?? "unknown") as GroupRunStepMetadata["runtimeStateAfter"],
+      },
+    } satisfies ContainerActionResult;
   }
 
   async stopContainer(idOrName: string) {
-    await this.docker.getContainer(idOrName).stop();
+    const container = await this.resolveContainer(idOrName);
+    const before = await container.inspect();
+    const stateBefore = (before.State?.Status as ContainerState | undefined) ?? "unknown";
+
+    if (["exited", "dead", "created"].includes(stateBefore)) {
+      return {
+        outcome: "skipped",
+        message: `Container ${idOrName} is already stopped`,
+        metadata: {
+          noopReason: "already_stopped",
+          runtimeStateBefore: stateBefore,
+          runtimeStateAfter: stateBefore,
+          exitCode: before.State?.ExitCode ?? null,
+          exitReason: before.State?.Error || before.State?.Status || null,
+          oomKilled: before.State?.OOMKilled ?? null,
+        },
+      } satisfies ContainerActionResult;
+    }
+
+    await container.stop();
+    const after = await container.inspect();
+
+    return {
+      outcome: "performed",
+      message: `Container ${idOrName} stopped`,
+      metadata: {
+        runtimeStateBefore: stateBefore,
+        runtimeStateAfter: ((after.State?.Status as ContainerState | undefined) ?? "unknown") as GroupRunStepMetadata["runtimeStateAfter"],
+        exitCode: after.State?.ExitCode ?? null,
+        exitReason: after.State?.Error || after.State?.Status || null,
+        oomKilled: after.State?.OOMKilled ?? null,
+      },
+    } satisfies ContainerActionResult;
   }
 
   async restartContainer(idOrName: string) {
@@ -580,21 +659,56 @@ export class DockerRuntimeClient {
       const status = inspect.State?.Status;
 
       if (health === "healthy") {
-        return { ready: true, reason: "healthy" };
+        return {
+          status: "ready",
+          reason: "healthy",
+          metadata: {
+            runtimeStateAfter: "running",
+          },
+        } satisfies WaitForReadyResult;
       }
 
       if (health === HEALTHCHECK_NONE && status === "running") {
-        return { ready: true, reason: "running" };
+        return {
+          status: "ready",
+          reason: "running",
+          metadata: {
+            runtimeStateAfter: "running",
+          },
+        } satisfies WaitForReadyResult;
       }
 
       if (health === "unhealthy" || status === "exited" || status === "dead") {
-        return { ready: false, reason: `${health}:${status}` };
+        const metadata = extractContainerStateSnapshot(inspect);
+        const exitCode = inspect.State?.ExitCode ?? null;
+        const oomKilled = inspect.State?.OOMKilled ?? false;
+        const exitReason = inspect.State?.Error || `${health}:${status}`;
+
+        if ((status === "exited" || status === "dead") && exitCode === 0 && !oomKilled) {
+          return {
+            status: "completed",
+            reason: exitReason || "exited with code 0",
+            metadata,
+          } satisfies WaitForReadyResult;
+        }
+
+        return {
+          status: "failed",
+          reason: exitReason,
+          metadata,
+        } satisfies WaitForReadyResult;
       }
 
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
 
-    return { ready: false, reason: "timeout" };
+    return {
+      status: "failed",
+      reason: "timeout",
+      metadata: {
+        runtimeStateAfter: "unknown",
+      },
+    } satisfies WaitForReadyResult;
   }
 
   async listVolumes(): Promise<VolumeSummary[]> {

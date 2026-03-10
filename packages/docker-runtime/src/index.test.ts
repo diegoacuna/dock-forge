@@ -288,3 +288,100 @@ describe("DockerRuntimeClient terminal helpers", () => {
     expect(stream.destroy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("DockerRuntimeClient orchestration helpers", () => {
+  it("treats starting an already running container as a skipped action", async () => {
+    const inspect = vi.fn().mockResolvedValue({
+      Id: "container-1",
+      State: { Status: "running" },
+    });
+    const start = vi.fn();
+    const client = new DockerRuntimeClient();
+
+    Object.assign(client as object, {
+      docker: {
+        getContainer: vi.fn().mockReturnValue({
+          inspect,
+          start,
+        }),
+      },
+    });
+
+    const result = await client.startContainer("postgres");
+
+    expect(result).toEqual({
+      outcome: "skipped",
+      message: "Container postgres is already running",
+      metadata: {
+        noopReason: "already_running",
+        runtimeStateBefore: "running",
+        runtimeStateAfter: "running",
+      },
+    });
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("treats stopping an exited container as a skipped action", async () => {
+    const inspect = vi.fn().mockResolvedValue({
+      Id: "container-1",
+      State: { Status: "exited", ExitCode: 0, OOMKilled: false, Error: "" },
+    });
+    const stop = vi.fn();
+    const client = new DockerRuntimeClient();
+
+    Object.assign(client as object, {
+      docker: {
+        getContainer: vi.fn().mockReturnValue({
+          inspect,
+          stop,
+        }),
+      },
+    });
+
+    const result = await client.stopContainer("postgres");
+
+    expect(result).toEqual({
+      outcome: "skipped",
+      message: "Container postgres is already stopped",
+      metadata: {
+        noopReason: "already_stopped",
+        runtimeStateBefore: "exited",
+        runtimeStateAfter: "exited",
+        exitCode: 0,
+        exitReason: "exited",
+        oomKilled: false,
+      },
+    });
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it("classifies exited containers with code 0 as completed readiness checks", async () => {
+    const inspect = vi.fn().mockResolvedValue({
+      Id: "container-1",
+      State: { Status: "exited", ExitCode: 0, OOMKilled: false, Error: "" },
+    });
+    const client = new DockerRuntimeClient();
+
+    Object.assign(client as object, {
+      docker: {
+        getContainer: vi.fn().mockReturnValue({
+          inspect,
+        }),
+      },
+    });
+
+    const result = await client.waitForReady("postgres", { timeoutMs: 1000, intervalMs: 10 });
+
+    expect(result).toEqual({
+      status: "completed",
+      reason: "none:exited",
+      metadata: {
+        runtimeStateBefore: "exited",
+        runtimeStateAfter: "exited",
+        exitCode: 0,
+        exitReason: "exited",
+        oomKilled: false,
+      },
+    });
+  });
+});
