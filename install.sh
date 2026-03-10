@@ -74,9 +74,9 @@ prompt() {
   local response
 
   if [ -n "$default_value" ]; then
-    printf "${COLOR_CYAN}%s${COLOR_RESET} ${COLOR_DIM}[%s]${COLOR_RESET}: " "$label" "$default_value"
+    printf "${COLOR_CYAN}%s${COLOR_RESET} ${COLOR_DIM}[%s]${COLOR_RESET}: " "$label" "$default_value" >&2
   else
-    printf "${COLOR_CYAN}%s${COLOR_RESET}: " "$label"
+    printf "${COLOR_CYAN}%s${COLOR_RESET}: " "$label" >&2
   fi
 
   read -r response
@@ -93,7 +93,7 @@ yes_no_prompt() {
   local response
 
   while true; do
-    printf "${COLOR_CYAN}%s${COLOR_RESET} ${COLOR_DIM}[%s]${COLOR_RESET}: " "$label" "$default_value"
+    printf "${COLOR_CYAN}%s${COLOR_RESET} ${COLOR_DIM}[%s]${COLOR_RESET}: " "$label" "$default_value" >&2
     read -r response
     response="${response:-$default_value}"
 
