@@ -36,6 +36,7 @@ const createGroupDetail = (): GroupDetail => ({
   color: "#f97316",
   memberCount: 3,
   dependencyCount: 0,
+  groupStatus: "degraded",
   lastRunStatus: null,
   createdAt: "2026-03-09T12:00:00.000Z",
   updatedAt: "2026-03-09T12:00:00.000Z",
@@ -120,6 +121,21 @@ describe("GroupGraphPanel", () => {
 
     expect(apiLink.getAttribute("href")).toBe("/containers/api");
     expect(workerLink.getAttribute("href")).toBe("/containers/worker");
+  });
+
+  it("filters the selected folder inspector by search", () => {
+    render(<GroupGraphPanel group={createGroupDetail()} />);
+
+    fireEvent.click(screen.getByTestId("graph-node-app"));
+    expect(screen.getByText("API")).toBeTruthy();
+    expect(screen.getByText("worker")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Search selected folder"), {
+      target: { value: "work" },
+    });
+
+    expect(screen.queryByText("API")).toBeNull();
+    expect(screen.getByText("worker")).toBeTruthy();
   });
 
   it("shows the empty state when the group has no execution stages", () => {

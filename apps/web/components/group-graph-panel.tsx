@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import React from "react";
-import { ArrowRight, FolderTree } from "lucide-react";
+import { ArrowRight, FolderTree, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { GroupDetail } from "@dockforge/shared";
 import { buildFolderGraphSummaries, getInitialSelectedFolderLabel, type FolderGraphSummary } from "../lib/group-graph";
 import { cn } from "../lib/utils";
 import { StateBadge } from "./status";
-import { Badge, Panel } from "./ui";
+import { Badge, Input, Panel } from "./ui";
 
 const statusCountConfig = [
   { key: "runningCount", label: "running" },
@@ -155,10 +155,32 @@ export const GroupGraphPanel = ({ group }: { group: GroupDetail }) => {
   );
 };
 
-const FolderInspector = ({ folder }: { folder: FolderGraphSummary | null }) => (
-  <aside className="min-h-[20rem] rounded-[28px] border border-slate-200 bg-slate-950 p-5 text-white" data-testid="graph-inspector">
-    {folder ? (
-      <div className="space-y-5">
+const FolderInspector = ({ folder }: { folder: FolderGraphSummary | null }) => {
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    setSearch("");
+  }, [folder?.folderLabel]);
+
+  const filteredContainers = useMemo(() => {
+    if (!folder) {
+      return [];
+    }
+
+    const normalizedSearch = search.trim().toLowerCase();
+    if (!normalizedSearch) {
+      return folder.containers;
+    }
+
+    return folder.containers.filter((container) =>
+      [container.name, container.detailTarget].some((value) => value.toLowerCase().includes(normalizedSearch)),
+    );
+  }, [folder, search]);
+
+  return (
+    <aside className="min-h-[20rem] rounded-[28px] border border-slate-200 bg-slate-950 p-5 text-white" data-testid="graph-inspector">
+      {folder ? (
+        <div className="space-y-5">
         <div className="border-b border-white/10 pb-4">
           <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Selected Folder</p>
           <div className="mt-3 flex items-start justify-between gap-3">
@@ -182,8 +204,29 @@ const FolderInspector = ({ folder }: { folder: FolderGraphSummary | null }) => (
             <p className="text-sm font-medium text-white">Containers</p>
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Live status</p>
           </div>
+          <div>
+            <label className="block text-xs uppercase tracking-[0.2em] text-slate-400" htmlFor="graph-folder-search">
+              Search selected folder
+            </label>
+            <div className="relative mt-2">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              <Input
+                id="graph-folder-search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search by name or container key"
+                className="border-white/10 bg-white/5 pl-9 text-white placeholder:text-slate-500 focus:border-orange-400"
+              />
+            </div>
+          </div>
           <div className="space-y-3">
-            {folder.containers.map((container) => (
+            {filteredContainers.length === 0 ? (
+              <div className="rounded-3xl border border-dashed border-white/10 bg-white/5 px-4 py-6 text-center">
+                <p className="text-sm font-medium text-white">No containers in this folder match the search.</p>
+                <p className="mt-2 text-sm text-slate-400">Try a different container name or key.</p>
+              </div>
+            ) : null}
+            {filteredContainers.map((container) => (
               <Link
                 key={container.id}
                 href={`/containers/${encodeURIComponent(container.detailTarget)}`}
@@ -213,9 +256,10 @@ const FolderInspector = ({ folder }: { folder: FolderGraphSummary | null }) => (
         <p className="mt-4 text-sm font-medium text-white">Select a folder node</p>
         <p className="mt-2 max-w-xs text-sm text-slate-400">Pick a stage card to inspect its containers, runtime health, and current status mix.</p>
       </div>
-    )}
-  </aside>
-);
+      )}
+    </aside>
+  );
+};
 
 const InspectorStat = ({ label, value }: { label: string; value: number }) => (
   <div className="rounded-3xl border border-white/10 bg-white/5 p-4">

@@ -15,6 +15,7 @@ import {
   type GroupExecutionStage,
   type GroupContainer as GroupContainerDto,
   type GroupDetail,
+  deriveGroupStatus,
   groupRunStepMetadataSchema,
   type GroupActionLaunch,
   type InstallConfig,
@@ -454,6 +455,34 @@ const mapGroupContainer = (
   updatedAt: container.updatedAt.toISOString(),
 });
 
+const createRuntimeContainerMap = (containers: ContainerSummary[]) => new Map(containers.map((container) => [container.containerKey, container]));
+
+const deriveMappedGroupStatus = (
+  containers: Array<{
+    id: string;
+    groupId: string;
+    containerKey: string;
+    containerNameSnapshot: string;
+    folderLabelSnapshot: string;
+    lastResolvedDockerId: string | null;
+    aliasName: string | null;
+    notes: string | null;
+    includeInStartAll: boolean;
+    includeInStopAll: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  }>,
+  runtimeMap: Map<string, ContainerSummary>,
+) => deriveGroupStatus(containers.map((container) => mapGroupContainer(container, runtimeMap.get(container.containerKey))));
+
+const listRuntimeContainersSafe = async () => {
+  try {
+    return await dockerClient.listContainers();
+  } catch {
+    return [] as ContainerSummary[];
+  }
+};
+
 const deriveFolderStagesFromEdges = (
   containers: Array<{ id: string; folderLabelSnapshot: string }>,
   edges: Array<{ fromGroupContainerId: string; toGroupContainerId: string }>,
@@ -688,12 +717,16 @@ const mapGroupRun = (run: {
 });
 
 export const listGroups = async () => {
-  const groups = await prisma.group.findMany({
-    include: includeGroup,
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+  const [groups, runtimeContainers] = await Promise.all([
+    prisma.group.findMany({
+      include: includeGroup,
+      orderBy: {
+        createdAt: "desc",
+      },
+    }),
+    listRuntimeContainersSafe(),
+  ]);
+  const runtimeMap = createRuntimeContainerMap(runtimeContainers);
 
   return groups.map((group: (typeof groups)[number]) => ({
     id: group.id,
@@ -703,6 +736,7 @@ export const listGroups = async () => {
     color: group.color,
     memberCount: group.containers.length,
     dependencyCount: group.edges.length,
+    groupStatus: deriveMappedGroupStatus(group.containers, runtimeMap),
     lastRunStatus: (group.runs[0]?.status as Group["lastRunStatus"]) ?? null,
     createdAt: group.createdAt.toISOString(),
     updatedAt: group.updatedAt.toISOString(),
@@ -710,26 +744,26 @@ export const listGroups = async () => {
 };
 
 export const getGroupDetail = async (groupId: string): Promise<GroupDetail> => {
-  const [group, runtimeContainers] = await Promise.all([
-    prisma.group.findUniqueOrThrow({
-      where: { id: groupId },
-      include: {
-        containers: true,
-        edges: true,
-        graphLayouts: true,
-        executionFolders: {
-          orderBy: { stage: "asc" },
-        },
-        runs: {
-          orderBy: { startedAt: "desc" },
-          take: 1,
-        },
+  const group = await prisma.group.findUniqueOrThrow({
+    where: { id: groupId },
+    include: {
+      containers: true,
+      edges: true,
+      graphLayouts: true,
+      executionFolders: {
+        orderBy: { stage: "asc" },
       },
-    }),
-    dockerClient.listContainers(),
-  ]);
-
-  const runtimeMap = new Map(runtimeContainers.map((container) => [container.containerKey, container]));
+      runs: {
+        orderBy: { startedAt: "desc" },
+        take: 1,
+      },
+    },
+  });
+  const runtimeContainers = await listRuntimeContainersSafe();
+  const runtimeMap = createRuntimeContainerMap(runtimeContainers);
+  const mappedContainers = group.containers.map((container: (typeof group.containers)[number]): GroupContainerDto =>
+    mapGroupContainer(container, runtimeMap.get(container.containerKey)),
+  );
 
   const executionFolders = mapExecutionFolders(group.containers, group.executionFolders, group.edges);
 
@@ -741,12 +775,11 @@ export const getGroupDetail = async (groupId: string): Promise<GroupDetail> => {
     color: group.color,
     memberCount: group.containers.length,
     dependencyCount: group.edges.length,
+    groupStatus: deriveGroupStatus(mappedContainers),
     lastRunStatus: (group.runs[0]?.status as GroupDetail["lastRunStatus"]) ?? null,
     createdAt: group.createdAt.toISOString(),
     updatedAt: group.updatedAt.toISOString(),
-    containers: group.containers.map((container: (typeof group.containers)[number]): GroupContainerDto =>
-      mapGroupContainer(container, runtimeMap.get(container.containerKey)),
-    ),
+    containers: mappedContainers,
     edges: group.edges.map((edge: (typeof group.edges)[number]) => ({
       id: edge.id,
       groupId: edge.groupId,

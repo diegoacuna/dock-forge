@@ -156,6 +156,7 @@ describe("containers page services", () => {
           color: null,
           memberCount: 0,
           dependencyCount: 0,
+          groupStatus: "unknown",
           lastRunStatus: null,
           createdAt: "2025-01-01T00:00:00.000Z",
           updatedAt: "2025-01-02T00:00:00.000Z",
@@ -169,7 +170,7 @@ describe("containers page services", () => {
   });
 
   it("reports groups persistence unavailable when the app settings table is missing on read", async () => {
-    mockPrisma.appSetting.findUnique.mockRejectedValueOnce({
+    mockPrisma.appSetting.findUnique.mockRejectedValue({
       code: "P2021",
     });
     mockPrisma.group.findMany.mockResolvedValue([]);
@@ -383,5 +384,167 @@ describe("containers page services", () => {
         steps: [],
       },
     });
+  });
+
+  it("derives group status for listGroups from runtime state", async () => {
+    mockPrisma.group.findMany.mockResolvedValue([
+      {
+        id: "group-1",
+        name: "Platform",
+        slug: "platform",
+        description: null,
+        color: null,
+        createdAt: new Date("2025-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2025-01-02T00:00:00.000Z"),
+        containers: [
+          {
+            id: "group-container-1",
+            groupId: "group-1",
+            containerKey: "api",
+            containerNameSnapshot: "api-1",
+            folderLabelSnapshot: "app",
+            lastResolvedDockerId: "docker-1",
+            aliasName: null,
+            notes: null,
+            includeInStartAll: true,
+            includeInStopAll: true,
+            createdAt: new Date("2025-01-01T00:00:00.000Z"),
+            updatedAt: new Date("2025-01-01T00:00:00.000Z"),
+          },
+        ],
+        edges: [],
+        graphLayouts: [],
+        executionFolders: [],
+        runs: [],
+      },
+    ]);
+    dockerState.listContainers.mockResolvedValue([
+      {
+        id: "docker-1",
+        containerKey: "api",
+        name: "api-1",
+        image: "ghcr.io/acme/api:latest",
+        imageId: "sha256:123",
+        state: "running",
+        status: "Up 2 minutes",
+        health: "healthy",
+        createdAt: "2026-03-10T12:00:00.000Z",
+        ports: [],
+        compose: {
+          project: "dock-forge",
+          service: "api",
+          workingDir: "/workspace/app",
+          configFiles: [],
+          rawLabels: {},
+        },
+        groupIds: ["group-1"],
+        groupNames: ["Platform"],
+      },
+    ]);
+
+    const { listGroups } = await import("./services.js");
+    const result = await listGroups();
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: "group-1",
+        groupStatus: "running",
+      }),
+    ]);
+  });
+
+  it("includes derived group status in group detail payloads", async () => {
+    mockPrisma.group.findUniqueOrThrow.mockResolvedValue({
+      id: "group-1",
+      name: "Core Stack",
+      slug: "core-stack",
+      description: null,
+      color: null,
+      createdAt: new Date("2026-03-10T12:00:00.000Z"),
+      updatedAt: new Date("2026-03-10T12:00:00.000Z"),
+      containers: [
+        {
+          id: "group-container-1",
+          groupId: "group-1",
+          containerKey: "api",
+          containerNameSnapshot: "api-1",
+          folderLabelSnapshot: "app",
+          lastResolvedDockerId: "docker-1",
+          aliasName: null,
+          notes: null,
+          includeInStartAll: true,
+          includeInStopAll: true,
+          createdAt: new Date("2026-03-10T12:00:00.000Z"),
+          updatedAt: new Date("2026-03-10T12:00:00.000Z"),
+        },
+        {
+          id: "group-container-2",
+          groupId: "group-1",
+          containerKey: "worker",
+          containerNameSnapshot: "worker-1",
+          folderLabelSnapshot: "app",
+          lastResolvedDockerId: "docker-2",
+          aliasName: null,
+          notes: null,
+          includeInStartAll: true,
+          includeInStopAll: true,
+          createdAt: new Date("2026-03-10T12:00:00.000Z"),
+          updatedAt: new Date("2026-03-10T12:00:00.000Z"),
+        },
+      ],
+      edges: [],
+      graphLayouts: [],
+      executionFolders: [],
+      runs: [],
+    });
+    dockerState.listContainers.mockResolvedValue([
+      {
+        id: "docker-1",
+        containerKey: "api",
+        name: "api-1",
+        image: "ghcr.io/acme/api:latest",
+        imageId: "sha256:123",
+        state: "running",
+        status: "Up 2 minutes",
+        health: "healthy",
+        createdAt: "2026-03-10T12:00:00.000Z",
+        ports: [],
+        compose: {
+          project: "dock-forge",
+          service: "api",
+          workingDir: "/workspace/app",
+          configFiles: [],
+          rawLabels: {},
+        },
+        groupIds: ["group-1"],
+        groupNames: ["Core Stack"],
+      },
+      {
+        id: "docker-2",
+        containerKey: "worker",
+        name: "worker-1",
+        image: "ghcr.io/acme/worker:latest",
+        imageId: "sha256:456",
+        state: "unknown",
+        status: "Unknown",
+        health: "unknown",
+        createdAt: "2026-03-10T12:00:00.000Z",
+        ports: [],
+        compose: {
+          project: "dock-forge",
+          service: "worker",
+          workingDir: "/workspace/app",
+          configFiles: [],
+          rawLabels: {},
+        },
+        groupIds: ["group-1"],
+        groupNames: ["Core Stack"],
+      },
+    ]);
+
+    const { getGroupDetail } = await import("./services.js");
+    const result = await getGroupDetail("group-1");
+
+    expect(result.groupStatus).toBe("degraded");
   });
 });

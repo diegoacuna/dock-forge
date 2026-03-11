@@ -2,16 +2,16 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Search } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { ContainerSummary, GroupActionLaunch, GroupDetail, GroupRun, GroupRunStep, OrchestrationPlan } from "@dockforge/shared";
+import type { ContainerSummary, GroupActionLaunch, GroupDetail, GroupRun, GroupRunStep, GroupStatus, OrchestrationPlan } from "@dockforge/shared";
 import { fetchJson, useApiQuery } from "../../../lib/api";
 import { resolveGroupDetailTab } from "../../../lib/onboarding";
 import { formatTimestamp } from "../../../lib/utils";
 import { ExecutionOrderPanel, GroupAttachOnboardingCallout, GroupAttachPanel } from "../../../components/group-detail-panels";
 import { GroupGraphPanel } from "../../../components/group-graph-panel";
 import { StateBadge } from "../../../components/status";
-import { Badge, Button, PageHeader, Panel } from "../../../components/ui";
+import { Badge, Button, Input, PageHeader, Panel } from "../../../components/ui";
 import { GroupedContainersTable } from "../../../components/grouped-containers-table";
 import { GROUP_DETAIL_TABS, groupContainerRowsByFolder, mapGroupContainersToRows, summarizeRunHistory } from "../../../lib/grouped-containers";
 
@@ -38,6 +38,16 @@ const initialActionModalState: ActionModalState = {
 };
 
 const RUNNING_STATUSES = new Set<GroupRun["status"]>(["PENDING", "RUNNING"]);
+const ACTION_BUTTONS: Array<{
+  action: GroupAction;
+  label: string;
+  variant?: "secondary" | "ghost";
+}> = [
+  { action: "start", label: "Start Group" },
+  { action: "stop", label: "Stop Group", variant: "secondary" },
+  { action: "restart", label: "Restart Group", variant: "ghost" },
+  { action: "start-clean", label: "Start Clean", variant: "ghost" },
+];
 
 const getActionLabel = (action: GroupAction | GroupRun["action"] | null) => {
   switch (action) {
@@ -93,6 +103,18 @@ const getStepDetail = (step: GroupRunStep) => {
   return null;
 };
 
+const getVisibleGroupActions = (groupStatus: GroupStatus) => {
+  if (groupStatus === "running") {
+    return ACTION_BUTTONS.filter((button) => button.action !== "start");
+  }
+
+  if (groupStatus === "stopped") {
+    return ACTION_BUTTONS.filter((button) => button.action !== "stop");
+  }
+
+  return ACTION_BUTTONS;
+};
+
 export function GroupDetailPageContent({ resolvedParams }: { resolvedParams: { id: string } }) {
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -105,6 +127,7 @@ export function GroupDetailPageContent({ resolvedParams }: { resolvedParams: { i
     allowedTabs: GROUP_DETAIL_TABS,
   }) as (typeof GROUP_DETAIL_TABS)[number];
   const [attachPanelOpen, setAttachPanelOpen] = useState(false);
+  const [containerSearch, setContainerSearch] = useState("");
   const [actionModal, setActionModal] = useState<ActionModalState>(initialActionModalState);
   const { data: group } = useApiQuery<GroupDetail>(["group", resolvedParams.id], `/groups/${resolvedParams.id}`, 8_000);
   const { data: containers } = useApiQuery<ContainerSummary[]>(["containers"], "/containers", 8_000);
@@ -116,13 +139,19 @@ export function GroupDetailPageContent({ resolvedParams }: { resolvedParams: { i
       return [];
     }
 
-    return groupContainerRowsByFolder(
-      mapGroupContainersToRows({
-        containers: group.containers,
-        runtimeContainers: containers ?? [],
-      }),
-    );
-  }, [containers, group]);
+    const rows = mapGroupContainersToRows({
+      containers: group.containers,
+      runtimeContainers: containers ?? [],
+    });
+    const normalizedSearch = containerSearch.trim().toLowerCase();
+    const filteredRows = normalizedSearch
+      ? rows.filter((row) =>
+          [row.name, row.containerKey, row.groupMembership?.snapshotName ?? ""].some((value) => value.toLowerCase().includes(normalizedSearch)),
+        )
+      : rows;
+
+    return groupContainerRowsByFolder(filteredRows);
+  }, [containerSearch, containers, group]);
 
   const runAction = async (action: GroupAction) => {
     setActionModal({
@@ -221,6 +250,7 @@ export function GroupDetailPageContent({ resolvedParams }: { resolvedParams: { i
   };
 
   const orchestrationBusy = actionModal.isLaunching || (actionModal.run != null && RUNNING_STATUSES.has(actionModal.run.status));
+  const visibleGroupActions = getVisibleGroupActions(group?.groupStatus ?? "unknown");
 
   return (
     <div className="space-y-6">
@@ -236,10 +266,16 @@ export function GroupDetailPageContent({ resolvedParams }: { resolvedParams: { i
         }
         actions={
           <>
-            <Button disabled={orchestrationBusy} onClick={() => void runAction("start")}>Start Group</Button>
-            <Button disabled={orchestrationBusy} variant="secondary" onClick={() => void runAction("stop")}>Stop Group</Button>
-            <Button disabled={orchestrationBusy} variant="ghost" onClick={() => void runAction("restart")}>Restart Group</Button>
-            <Button disabled={orchestrationBusy} variant="ghost" onClick={() => void runAction("start-clean")}>Start Clean</Button>
+            {visibleGroupActions.map((button) => (
+              <Button
+                key={button.action}
+                disabled={orchestrationBusy}
+                variant={button.variant}
+                onClick={() => void runAction(button.action)}
+              >
+                {button.label}
+              </Button>
+            ))}
           </>
         }
       />
@@ -329,6 +365,9 @@ export function GroupDetailPageContent({ resolvedParams }: { resolvedParams: { i
               <div className="mt-4 space-y-2 text-sm text-slate-700">
                 <p><strong>Slug:</strong> {group.slug}</p>
                 <p><strong>Containers:</strong> {group.memberCount}</p>
+                <p>
+                  <strong>Live status:</strong> <span className="inline-flex align-middle"><StateBadge state={group.groupStatus} /></span>
+                </p>
                 <p><strong>Attached folders:</strong> {group.executionFolders.length}</p>
                 <p><strong>Execution stages:</strong> {group.executionStages.length}</p>
                 <p><strong>Last run:</strong> {group.lastRunStatus ?? "—"}</p>
@@ -409,12 +448,33 @@ export function GroupDetailPageContent({ resolvedParams }: { resolvedParams: { i
                 Review the live runtime state for every attached container, grouped by folder, before adjusting execution order or graph dependencies.
               </p>
             </div>
+            <div className="mb-4 max-w-md">
+              <label className="block text-xs uppercase tracking-[0.2em] text-slate-500" htmlFor="group-container-search">
+                Search attached containers
+              </label>
+              <div className="relative mt-2">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  id="group-container-search"
+                  value={containerSearch}
+                  onChange={(event) => setContainerSearch(event.target.value)}
+                  placeholder="Search by name or container key"
+                  className="pl-9"
+                />
+              </div>
+            </div>
             <GroupedContainersTable
               sections={groupContainerSections}
               emptyState={
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
-                  <p className="text-sm font-medium text-slate-900">No containers are attached to this group yet.</p>
-                  <p className="mt-2 text-sm text-slate-600">Use the attach tools above to add containers and start building the group execution flow.</p>
+                  <p className="text-sm font-medium text-slate-900">
+                    {containerSearch.trim() ? "No attached containers match this search." : "No containers are attached to this group yet."}
+                  </p>
+                  <p className="mt-2 text-sm text-slate-600">
+                    {containerSearch.trim()
+                      ? "Try a different container name or key."
+                      : "Use the attach tools above to add containers and start building the group execution flow."}
+                  </p>
                 </div>
               }
               getRowHref={(row) => `/containers/${row.detailTarget}`}

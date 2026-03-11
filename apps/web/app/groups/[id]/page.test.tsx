@@ -34,11 +34,20 @@ vi.mock("../../../components/group-graph-panel", () => ({
 }));
 
 vi.mock("../../../components/grouped-containers-table", () => ({
-  GroupedContainersTable: () => <div>Grouped containers table</div>,
+  GroupedContainersTable: ({ sections, emptyState }: { sections: Array<{ containers: Array<{ id: string; name: string }> }>; emptyState: React.ReactNode }) =>
+    sections.length === 0 ? (
+      <>{emptyState}</>
+    ) : (
+      <div>
+        {sections.flatMap((section) => section.containers).map((row) => (
+          <div key={row.id}>{row.name}</div>
+        ))}
+      </div>
+    ),
 }));
 
 vi.mock("../../../components/status", () => ({
-  StateBadge: ({ state }: { state: string }) => <div>{state}</div>,
+  StateBadge: ({ state }: { state: string }) => <span>{state}</span>,
 }));
 
 vi.mock("../../../components/ui", () => ({
@@ -48,6 +57,7 @@ vi.mock("../../../components/ui", () => ({
       {children}
     </button>
   ),
+  Input: (props: React.InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
   PageHeader: ({ title, actions }: { title: string; actions?: React.ReactNode }) => (
     <div>
       <div>{title}</div>
@@ -75,6 +85,7 @@ const group: GroupDetail = {
   color: "#123456",
   memberCount: 1,
   dependencyCount: 0,
+  groupStatus: "degraded",
   containers: [
     {
       id: "group-container-1",
@@ -263,5 +274,155 @@ describe("GroupDetailPage", () => {
       expect(screen.getByText("No Docker action was needed because the container was already running.")).toBeTruthy();
     }, { timeout: 2500 });
     expect(invalidateQueries).toHaveBeenCalled();
+  });
+
+  it("hides the start action when the group is already running", async () => {
+    vi.mocked(api.useApiQuery).mockImplementation((queryKey: unknown) => {
+      const key = Array.isArray(queryKey) ? queryKey[0] : queryKey;
+
+      if (key === "group") {
+        return { data: { ...group, groupStatus: "running" } } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      if (key === "containers") {
+        return { data: containers } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      if (key === "group-runs") {
+        return { data: runs } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      if (key === "group-plan") {
+        return { data: plan } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      return { data: undefined } as ReturnType<typeof api.useApiQuery>;
+    });
+
+    render(<GroupDetailPageContent resolvedParams={{ id: "group-1" }} />);
+
+    expect(screen.queryByRole("button", { name: "Start Group" })).toBeNull();
+    expect(await screen.findByRole("button", { name: "Stop Group" })).toBeTruthy();
+  });
+
+  it("hides the stop action when the group is stopped", async () => {
+    vi.mocked(api.useApiQuery).mockImplementation((queryKey: unknown) => {
+      const key = Array.isArray(queryKey) ? queryKey[0] : queryKey;
+
+      if (key === "group") {
+        return { data: { ...group, groupStatus: "stopped" } } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      if (key === "containers") {
+        return { data: containers } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      if (key === "group-runs") {
+        return { data: runs } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      if (key === "group-plan") {
+        return { data: plan } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      return { data: undefined } as ReturnType<typeof api.useApiQuery>;
+    });
+
+    render(<GroupDetailPageContent resolvedParams={{ id: "group-1" }} />);
+
+    expect(screen.queryByRole("button", { name: "Stop Group" })).toBeNull();
+    expect(await screen.findByRole("button", { name: "Start Group" })).toBeTruthy();
+  });
+
+  it("shows both start and stop when the group status is degraded", async () => {
+    vi.mocked(api.useApiQuery).mockImplementation((queryKey: unknown) => {
+      const key = Array.isArray(queryKey) ? queryKey[0] : queryKey;
+
+      if (key === "group") {
+        return { data: { ...group, groupStatus: "degraded" } } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      if (key === "containers") {
+        return { data: containers } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      if (key === "group-runs") {
+        return { data: runs } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      if (key === "group-plan") {
+        return { data: plan } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      return { data: undefined } as ReturnType<typeof api.useApiQuery>;
+    });
+
+    render(<GroupDetailPageContent resolvedParams={{ id: "group-1" }} />);
+
+    expect(await screen.findByRole("button", { name: "Start Group" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Stop Group" })).toBeTruthy();
+  });
+
+  it("filters attached containers by the search field on the containers tab", async () => {
+    const filteredGroup = {
+      ...group,
+      containers: [
+        group.containers[0],
+        {
+          ...group.containers[0],
+          id: "group-container-2",
+          containerKey: "worker",
+          containerNameSnapshot: "worker-1",
+        },
+      ],
+      memberCount: 2,
+    } satisfies GroupDetail;
+    const filteredContainers = [
+      containers[0],
+      {
+        ...containers[0],
+        id: "runtime-2",
+        containerKey: "worker",
+        name: "worker-1",
+      },
+    ] satisfies ContainerSummary[];
+
+    vi.mocked(api.useApiQuery).mockImplementation((queryKey: unknown) => {
+      const key = Array.isArray(queryKey) ? queryKey[0] : queryKey;
+
+      if (key === "group") {
+        return { data: filteredGroup } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      if (key === "containers") {
+        return { data: filteredContainers } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      if (key === "group-runs") {
+        return { data: runs } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      if (key === "group-plan") {
+        return { data: plan } as ReturnType<typeof api.useApiQuery>;
+      }
+
+      return { data: undefined } as ReturnType<typeof api.useApiQuery>;
+    });
+
+    searchParamsState.set("tab", "Containers");
+
+    render(<GroupDetailPageContent resolvedParams={{ id: "group-1" }} />);
+
+    expect(await screen.findByText("api-1")).toBeTruthy();
+    expect(screen.getByText("worker-1")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Search attached containers"), {
+      target: { value: "worker" },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("api-1")).toBeNull();
+      expect(screen.getByText("worker-1")).toBeTruthy();
+    });
   });
 });

@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { DashboardData } from "@dockforge/shared";
@@ -98,7 +99,7 @@ export default function DashboardPage() {
                     <p className="font-medium text-slate-950">{group.name}</p>
                     <p className="text-sm text-slate-500">{group.memberCount} members</p>
                   </div>
-                  <StateBadge state={group.lastRunStatus?.toLowerCase()} />
+                  <StateBadge state={group.groupStatus} />
                 </div>
               </Link>
             ))}

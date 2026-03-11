@@ -87,9 +87,12 @@ export const Button = ({
   );
 };
 
-export const Input = (props: React.InputHTMLAttributes<HTMLInputElement>) => (
+export const Input = ({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) => (
   <input
-    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-0 transition focus:border-orange-300"
+    className={cn(
+      "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-0 transition focus:border-orange-300",
+      className,
+    )}
     {...props}
   />
 );

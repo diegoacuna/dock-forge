@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   completeInstallSchema,
   containersPageDataSchema,
-  groupActionLaunchSchema,
   containersTourUpdateSchema,
+  countRuntimeStatuses,
+  deriveGroupStatus,
+  groupActionLaunchSchema,
   groupRunStepSchema,
   groupsPageDataSchema,
   groupsTourUpdateSchema,
@@ -157,5 +159,62 @@ describe("containers page schemas", () => {
         runId: "run-1",
       }),
     );
+  });
+
+  it("derives running, stopped, error, restarting, degraded, and unknown group states", () => {
+    expect(
+      deriveGroupStatus([
+        { runtimeState: "running", runtimeHealth: "healthy" },
+        { runtimeState: "running", runtimeHealth: "healthy" },
+      ]),
+    ).toBe("running");
+
+    expect(
+      deriveGroupStatus([
+        { runtimeState: "exited", runtimeHealth: "unknown" },
+        { runtimeState: "created", runtimeHealth: "unknown" },
+      ]),
+    ).toBe("stopped");
+
+    expect(
+      deriveGroupStatus([
+        { runtimeState: "running", runtimeHealth: "healthy" },
+        { runtimeState: "restarting", runtimeHealth: "unhealthy" },
+      ]),
+    ).toBe("error");
+
+    expect(
+      deriveGroupStatus([
+        { runtimeState: "running", runtimeHealth: "healthy" },
+        { runtimeState: "restarting", runtimeHealth: "healthy" },
+      ]),
+    ).toBe("restarting");
+
+    expect(
+      deriveGroupStatus([
+        { runtimeState: "running", runtimeHealth: "healthy" },
+        { runtimeState: "unknown", runtimeHealth: "unknown" },
+      ]),
+    ).toBe("degraded");
+
+    expect(deriveGroupStatus([])).toBe("unknown");
+  });
+
+  it("counts runtime status buckets consistently", () => {
+    expect(
+      countRuntimeStatuses([
+        { runtimeState: "running", runtimeHealth: "healthy" },
+        { runtimeState: "created", runtimeHealth: "unknown" },
+        { runtimeState: "restarting", runtimeHealth: "healthy" },
+        { runtimeState: "unknown", runtimeHealth: "unknown" },
+      ]),
+    ).toEqual({
+      totalContainers: 4,
+      runningCount: 1,
+      stoppedCount: 1,
+      restartingCount: 1,
+      unhealthyCount: 0,
+      unknownCount: 1,
+    });
   });
 });

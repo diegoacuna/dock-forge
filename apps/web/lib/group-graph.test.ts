@@ -28,6 +28,7 @@ const createGroupDetail = (containers: GroupDetail["containers"]): GroupDetail =
   color: "#f97316",
   memberCount: containers.length,
   dependencyCount: 0,
+  groupStatus: "running",
   lastRunStatus: null,
   createdAt: "2026-03-09T12:00:00.000Z",
   updatedAt: "2026-03-09T12:00:00.000Z",

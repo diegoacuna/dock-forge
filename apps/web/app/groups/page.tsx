@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import Link from "next/link";
 import { Boxes, FileSearch, PlusCircle } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -162,7 +163,7 @@ export default function GroupsPage() {
               <th className="px-3 py-2">Name</th>
               <th className="px-3 py-2">Containers</th>
               <th className="px-3 py-2">Dependencies</th>
-              <th className="px-3 py-2">Last run</th>
+              <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">Actions</th>
             </tr>
           </thead>
@@ -184,7 +185,7 @@ export default function GroupsPage() {
                 </td>
                 <td className="px-3 py-4">{group.memberCount}</td>
                 <td className="px-3 py-4">{group.dependencyCount}</td>
-                <td className="px-3 py-4"><StateBadge state={group.lastRunStatus?.toLowerCase()} /></td>
+                <td className="px-3 py-4"><StateBadge state={group.groupStatus} /></td>
                 <td className="px-3 py-4">
                   <Button
                     variant="danger"

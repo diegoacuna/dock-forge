@@ -1,6 +1,6 @@
-import type { GroupContainer, GroupDetail } from "@dockforge/shared";
+import { countRuntimeStatuses, getAggregateRuntimeStatus, type GroupContainer, type GroupDetail, type RuntimeStatusCounts, type GroupStatus } from "@dockforge/shared";
 
-export type FolderAggregateStatus = "error" | "restarting" | "degraded" | "running" | "stopped" | "unknown";
+export type FolderAggregateStatus = GroupStatus;
 
 export type FolderContainerStatus = {
   id: string;
@@ -25,48 +25,11 @@ export type FolderGraphSummary = {
   containers: FolderContainerStatus[];
 };
 
-export type FolderAggregateCounts = {
-  totalContainers: number;
-  runningCount: number;
-  stoppedCount: number;
-  restartingCount: number;
-  unhealthyCount: number;
-  unknownCount: number;
-};
+export type FolderAggregateCounts = RuntimeStatusCounts;
 
 const getContainerDisplayName = (container: GroupContainer) => container.aliasName || container.containerNameSnapshot;
 
-export const getFolderAggregateStatus = ({
-  totalContainers,
-  runningCount,
-  stoppedCount,
-  restartingCount,
-  unhealthyCount,
-  unknownCount,
-}: FolderAggregateCounts): FolderAggregateStatus => {
-  if (unhealthyCount > 0) {
-    return "error";
-  }
-
-  if (restartingCount > 0) {
-    return "restarting";
-  }
-
-  const activeKinds = [runningCount > 0, stoppedCount > 0, unknownCount > 0].filter(Boolean).length;
-  if (activeKinds > 1) {
-    return "degraded";
-  }
-
-  if (totalContainers > 0 && runningCount === totalContainers) {
-    return "running";
-  }
-
-  if (totalContainers > 0 && stoppedCount === totalContainers) {
-    return "stopped";
-  }
-
-  return "unknown";
-};
+export const getFolderAggregateStatus = (counts: FolderAggregateCounts): FolderAggregateStatus => getAggregateRuntimeStatus(counts);
 
 export const buildFolderGraphSummaries = (group: Pick<GroupDetail, "containers" | "executionStages">): FolderGraphSummary[] => {
   const containersByFolder = group.containers.reduce<Map<string, GroupContainer[]>>((accumulator, container) => {
@@ -90,15 +53,11 @@ export const buildFolderGraphSummaries = (group: Pick<GroupDetail, "containers" 
           source: container.lastResolvedDockerId ? "runtime" : "snapshot",
         }));
 
+      const statusCounts = countRuntimeStatuses(containers);
       const summaryBase = {
         folderLabel: folder.folderLabel,
         stage: stage.stage,
-        totalContainers: containers.length,
-        runningCount: containers.filter((container) => container.runtimeState === "running").length,
-        stoppedCount: containers.filter((container) => container.runtimeState === "exited" || container.runtimeState === "created").length,
-        restartingCount: containers.filter((container) => container.runtimeState === "restarting").length,
-        unhealthyCount: containers.filter((container) => container.runtimeHealth === "unhealthy").length,
-        unknownCount: containers.filter((container) => !container.runtimeState || container.runtimeState === "unknown").length,
+        ...statusCounts,
         containers,
       };
 

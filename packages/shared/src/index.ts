@@ -15,6 +15,7 @@ export const healthStatusSchema = z.enum(["healthy", "unhealthy", "starting", "n
 export const runActionSchema = z.enum(["START", "STOP", "RESTART", "START_CLEAN"]);
 export const runStatusSchema = z.enum(["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "SKIPPED"]);
 export const runStepActionSchema = z.enum(["START", "STOP", "RESTART", "WAIT_READY"]);
+export const groupStatusSchema = z.enum(["running", "stopped", "restarting", "error", "degraded", "unknown"]);
 
 export const composeMetadataSchema = z.object({
   project: z.string().nullable(),
@@ -222,6 +223,7 @@ export const groupSchema = z.object({
   color: z.string().nullable(),
   memberCount: z.number(),
   dependencyCount: z.number(),
+  groupStatus: groupStatusSchema,
   lastRunStatus: runStatusSchema.nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -516,6 +518,7 @@ export type TerminalServerMessage = z.infer<typeof terminalServerMessageSchema>;
 export type TerminalDebugSnapshot = z.infer<typeof terminalDebugSnapshotSchema>;
 export type HealthStatus = z.infer<typeof healthStatusSchema>;
 export type ContainerState = z.infer<typeof containerStateSchema>;
+export type GroupStatus = z.infer<typeof groupStatusSchema>;
 export type Group = z.infer<typeof groupSchema>;
 export type GroupContainer = z.infer<typeof groupContainerSchema>;
 export type DependencyEdge = z.infer<typeof dependencyEdgeSchema>;
@@ -543,6 +546,76 @@ export type NetworkDetail = z.infer<typeof networkDetailSchema>;
 export type BulkAddGroupContainersResult = z.infer<typeof bulkAddGroupContainersResultSchema>;
 
 export const canonicalizeContainerKey = (name: string) => name.replace(/^\//, "").trim();
+
+export type RuntimeStatusCounts = {
+  totalContainers: number;
+  runningCount: number;
+  stoppedCount: number;
+  restartingCount: number;
+  unhealthyCount: number;
+  unknownCount: number;
+};
+
+export const getAggregateRuntimeStatus = ({
+  totalContainers,
+  runningCount,
+  stoppedCount,
+  restartingCount,
+  unhealthyCount,
+  unknownCount,
+}: RuntimeStatusCounts): GroupStatus => {
+  if (totalContainers === 0) {
+    return "unknown";
+  }
+
+  if (unhealthyCount > 0) {
+    return "error";
+  }
+
+  if (restartingCount > 0) {
+    return "restarting";
+  }
+
+  const activeKinds = [runningCount > 0, stoppedCount > 0, unknownCount > 0].filter(Boolean).length;
+  if (activeKinds > 1) {
+    return "degraded";
+  }
+
+  if (runningCount === totalContainers) {
+    return "running";
+  }
+
+  if (stoppedCount === totalContainers) {
+    return "stopped";
+  }
+
+  return "unknown";
+};
+
+export const countRuntimeStatuses = <
+  T extends {
+    runtimeState: ContainerState;
+    runtimeHealth: HealthStatus;
+  },
+>(
+  containers: T[],
+): RuntimeStatusCounts => ({
+  totalContainers: containers.length,
+  runningCount: containers.filter((container) => container.runtimeState === "running").length,
+  stoppedCount: containers.filter((container) => container.runtimeState === "exited" || container.runtimeState === "created").length,
+  restartingCount: containers.filter((container) => container.runtimeState === "restarting").length,
+  unhealthyCount: containers.filter((container) => container.runtimeHealth === "unhealthy").length,
+  unknownCount: containers.filter((container) => container.runtimeState === "unknown").length,
+});
+
+export const deriveGroupStatus = <
+  T extends {
+    runtimeState: ContainerState;
+    runtimeHealth: HealthStatus;
+  },
+>(
+  containers: T[],
+): GroupStatus => getAggregateRuntimeStatus(countRuntimeStatuses(containers));
 
 export const getFolderLabel = (workingDir: string | null | undefined) => {
   if (!workingDir) {
