@@ -5,6 +5,7 @@ export const CONTAINER_DETAIL_TABS = [
   "Networks",
   "Compose metadata",
   "Raw inspect",
+  "Logs",
   "Terminal",
 ] as const;
 

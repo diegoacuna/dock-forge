@@ -6,6 +6,7 @@ import type { ContainerDetail } from "@dockforge/shared";
 import { useApiQuery } from "@/lib/api";
 import { CONTAINER_DETAIL_TABS, resolveContainerDetailTab } from "@/lib/container-detail-tabs";
 import { formatTimestamp } from "@/lib/utils";
+import { ContainerLogsPanel } from "@/components/container-logs-panel";
 import { CopyButton, PageHeader, Panel } from "@/components/ui";
 import { ContainerTerminalPanel } from "@/components/container-terminal-panel";
 
@@ -100,6 +101,14 @@ function ContainerDetailPageContent({ params }: { params: Promise<{ idOrName: st
           <div className="mb-3 flex justify-end"><CopyButton text={JSON.stringify(overview.inspect, null, 2)} /></div>
           <pre className="rounded-2xl bg-slate-950 p-4 text-xs text-slate-100">{JSON.stringify(overview.inspect, null, 2)}</pre>
         </Panel>
+      ) : null}
+
+      {tab === "Logs" && overview ? (
+        <ContainerLogsPanel
+          containerIdOrName={resolvedParams.idOrName}
+          containerName={overview.name}
+          viewportClassName="min-h-[28rem] max-h-[40rem]"
+        />
       ) : null}
 
       {tab === "Terminal" && data && overview ? (

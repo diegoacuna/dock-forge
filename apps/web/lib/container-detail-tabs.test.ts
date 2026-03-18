@@ -10,11 +10,13 @@ describe("container detail tabs", () => {
       "Networks",
       "Compose metadata",
       "Raw inspect",
+      "Logs",
       "Terminal",
     ]);
   });
 
   it("uses a valid requested tab from the url", () => {
+    expect(resolveContainerDetailTab("Logs")).toBe("Logs");
     expect(resolveContainerDetailTab("Terminal")).toBe("Terminal");
     expect(resolveContainerDetailTab("Raw inspect")).toBe("Raw inspect");
   });
