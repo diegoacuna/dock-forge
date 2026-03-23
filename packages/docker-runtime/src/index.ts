@@ -1,10 +1,14 @@
 import Docker from "dockerode";
 import type { ContainerInfo, ContainerInspectInfo, NetworkInspectInfo, VolumeInspectInfo } from "dockerode";
 import {
+  DEFAULT_CONTAINER_LOG_SEARCH_TAIL,
   DEFAULT_CONTAINER_LOG_TAIL,
+  MAX_CONTAINER_LOG_SEARCH_TAIL,
   MAX_CONTAINER_LOG_TAIL,
   canonicalizeContainerKey,
   type ContainerLogEntry,
+  type ContainerLogSearchMode,
+  type ContainerLogSearchResponse,
   type ContainerLogsResponse,
   type ContainerDetail,
   type ContainerOverview,
@@ -45,6 +49,13 @@ type LogStream = "stdout" | "stderr";
 type LogStreamCallbacks = {
   onEntry: (entry: ContainerLogEntry) => void;
   onError?: (error: Error) => void;
+};
+
+type ContainerLogSearchOptions = {
+  query: string;
+  mode?: ContainerLogSearchMode;
+  caseSensitive?: boolean;
+  scanTail?: number;
 };
 
 export type TerminalSessionCallbacks = {
@@ -358,6 +369,11 @@ const clampLogTail = (tailLines?: number) => {
   return Math.min(Math.max(requestedTail, 1), MAX_CONTAINER_LOG_TAIL);
 };
 
+const clampLogSearchTail = (scanTail?: number) => {
+  const requestedTail = scanTail ?? DEFAULT_CONTAINER_LOG_SEARCH_TAIL;
+  return Math.min(Math.max(requestedTail, 1), MAX_CONTAINER_LOG_SEARCH_TAIL);
+};
+
 const streamToBuffer = async (stream: NodeJS.ReadableStream) => {
   const chunks: Buffer[] = [];
 
@@ -374,6 +390,51 @@ export const parseDockerLogChunk = (chunk: Buffer) => {
   parser.feed(chunk);
   parser.flush();
   return entries;
+};
+
+const createInvalidLogSearchError = (message: string) => {
+  const error = new Error(message);
+  (error as Error & { code?: string }).code = "INVALID_LOG_SEARCH";
+  return error;
+};
+
+export const createContainerLogSearchMatcher = ({ query, mode = "plain", caseSensitive = false }: ContainerLogSearchOptions) => {
+  const normalizedQuery = query.trim();
+  if (normalizedQuery.length === 0) {
+    throw createInvalidLogSearchError("Log search query cannot be empty");
+  }
+
+  if (mode === "regex") {
+    try {
+      const flags = caseSensitive ? "g" : "gi";
+      const pattern = new RegExp(normalizedQuery, flags);
+      return (message: string) => {
+        pattern.lastIndex = 0;
+        return pattern.test(message);
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid regular expression";
+      throw createInvalidLogSearchError(`Invalid log search regex: ${message}`);
+    }
+  }
+
+  if (caseSensitive) {
+    return (message: string) => message.includes(normalizedQuery);
+  }
+
+  const loweredQuery = normalizedQuery.toLowerCase();
+  return (message: string) => message.toLowerCase().includes(loweredQuery);
+};
+
+export const findContainerLogMatchIndexes = (entries: ContainerLogEntry[], options: ContainerLogSearchOptions) => {
+  const matches = createContainerLogSearchMatcher(options);
+  return entries.reduce<number[]>((indexes, entry, index) => {
+    if (matches(entry.message)) {
+      indexes.push(index);
+    }
+
+    return indexes;
+  }, []);
 };
 
 export class DockerRuntimeClient {
@@ -438,6 +499,31 @@ export class DockerRuntimeClient {
       containerIdOrName: idOrName,
       tailLines,
       truncated: entries.length >= tailLines,
+      entries,
+    };
+  }
+
+  async searchContainerLogs(idOrName: string, options: ContainerLogSearchOptions): Promise<ContainerLogSearchResponse> {
+    const scanTail = clampLogSearchTail(options.scanTail);
+    const container = await this.resolveContainer(idOrName);
+    const logs = await container.logs({
+      follow: false,
+      stdout: true,
+      stderr: true,
+      timestamps: true,
+      tail: scanTail,
+    });
+
+    const payload = Buffer.isBuffer(logs) ? logs : await streamToBuffer(logs);
+    const entries = parseDockerLogChunk(payload);
+    const matchIndexes = findContainerLogMatchIndexes(entries, options);
+
+    return {
+      containerIdOrName: idOrName,
+      scanTail,
+      truncated: entries.length >= scanTail,
+      matchCount: matchIndexes.length,
+      matchIndexes,
       entries,
     };
   }

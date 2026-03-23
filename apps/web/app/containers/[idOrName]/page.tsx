@@ -107,6 +107,7 @@ function ContainerDetailPageContent({ params }: { params: Promise<{ idOrName: st
         <ContainerLogsPanel
           containerIdOrName={resolvedParams.idOrName}
           containerName={overview.name}
+          searchMode="advanced"
           viewportClassName="min-h-[28rem] max-h-[40rem]"
         />
       ) : null}

@@ -5,6 +5,7 @@ import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
 import {
   canonicalizeContainerKey,
+  containerLogSearchQuerySchema,
   containerLogsQuerySchema,
   addGroupContainerSchema,
   bulkAddGroupContainersSchema,
@@ -71,6 +72,11 @@ const toHttpError = (app: ReturnType<typeof Fastify>, error: unknown) => {
 
   return app.httpErrors.internalServerError(message);
 };
+
+const isSchemaValidationError = (error: unknown) => Boolean(error && typeof error === "object" && "issues" in error);
+
+const isInvalidLogSearchError = (error: unknown) =>
+  Boolean(error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "INVALID_LOG_SEARCH");
 
 const sendTerminalMessage = (socket: TerminalSocketLike, message: TerminalServerMessage) => {
   socket.send(JSON.stringify(message));
@@ -304,6 +310,18 @@ export const buildApp = () => {
       throw toHttpError(app, error);
     }
   });
+  app.get("/api/containers/:idOrName/logs/search", async (request) => {
+    try {
+      const query = containerLogSearchQuerySchema.parse(request.query);
+      return await dockerClient.searchContainerLogs((request.params as { idOrName: string }).idOrName, query);
+    } catch (error) {
+      if (isSchemaValidationError(error) || isInvalidLogSearchError(error)) {
+        throw app.httpErrors.badRequest(error instanceof Error ? error.message : "Invalid log search query");
+      }
+
+      throw toHttpError(app, error);
+    }
+  });
   app.get("/api/containers/:idOrName/logs/stream", async (request, reply) => {
     const idOrName = (request.params as { idOrName: string }).idOrName;
 
@@ -363,7 +381,7 @@ export const buildApp = () => {
         },
       });
     } catch (error) {
-      if (error && typeof error === "object" && "issues" in error) {
+      if (isSchemaValidationError(error)) {
         throw app.httpErrors.badRequest(error instanceof Error ? error.message : "Invalid log query");
       }
 

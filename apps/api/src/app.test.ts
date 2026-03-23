@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const getContainerLogs = vi.fn();
+const searchContainerLogs = vi.fn();
 const streamContainerLogs = vi.fn();
 const openContainerTerminal = vi.fn();
 const getContainerDetail = vi.fn();
@@ -22,6 +23,7 @@ vi.mock("./services.js", () => ({
     getContainerDetail,
     inspectContainer: vi.fn(),
     getContainerLogs,
+    searchContainerLogs,
     streamContainerLogs,
     openContainerTerminal,
     startContainer: vi.fn(),
@@ -184,6 +186,79 @@ describe("container log routes", () => {
 
     expect(response.statusCode).toBe(400);
     expect(getContainerLogs).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("returns container log search results", async () => {
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+
+    searchContainerLogs.mockResolvedValue({
+      containerIdOrName: "postgres",
+      scanTail: 5000,
+      truncated: false,
+      matchCount: 1,
+      matchIndexes: [0],
+      entries: [
+        {
+          timestamp: "2026-03-17T12:00:00.000Z",
+          stream: "stdout",
+          message: "Server started",
+        },
+      ],
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/containers/postgres/logs/search?query=server",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(searchContainerLogs).toHaveBeenCalledWith("postgres", {
+      query: "server",
+      mode: "plain",
+      caseSensitive: false,
+      scanTail: 5000,
+    });
+
+    await app.close();
+  });
+
+  it("rejects invalid regex log search requests", async () => {
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+    const error = new Error("Invalid log search regex: Unterminated character class");
+    (error as Error & { code?: string }).code = "INVALID_LOG_SEARCH";
+    searchContainerLogs.mockRejectedValue(error);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/containers/postgres/logs/search?query=%5B&mode=regex",
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(searchContainerLogs).toHaveBeenCalledWith("postgres", {
+      query: "[",
+      mode: "regex",
+      caseSensitive: false,
+      scanTail: 5000,
+    });
+
+    await app.close();
+  });
+
+  it("rejects oversized log search scan requests", async () => {
+    const { buildApp } = await import("./app.js");
+    const app = buildApp();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/containers/postgres/logs/search?query=server&scanTail=10001",
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(searchContainerLogs).not.toHaveBeenCalled();
 
     await app.close();
   });

@@ -87,15 +87,18 @@ export const Button = ({
   );
 };
 
-export const Input = ({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) => (
+export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ className, ...props }, ref) => (
   <input
+    ref={ref}
     className={cn(
       "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-0 transition focus:border-orange-300",
       className,
     )}
     {...props}
   />
-);
+));
+
+Input.displayName = "Input";
 
 export const TextArea = (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => (
   <textarea

@@ -160,11 +160,24 @@ export const containerLogEntrySchema = z.object({
 
 export const DEFAULT_CONTAINER_LOG_TAIL = 200;
 export const MAX_CONTAINER_LOG_TAIL = 1000;
+export const DEFAULT_CONTAINER_LOG_SEARCH_TAIL = 5000;
+export const MAX_CONTAINER_LOG_SEARCH_TAIL = 10000;
+
+export const containerLogSearchModeSchema = z.enum(["plain", "regex"]);
 
 export const containerLogsResponseSchema = z.object({
   containerIdOrName: z.string(),
   tailLines: z.number().int().positive(),
   truncated: z.boolean(),
+  entries: z.array(containerLogEntrySchema),
+});
+
+export const containerLogSearchResponseSchema = z.object({
+  containerIdOrName: z.string(),
+  scanTail: z.number().int().positive(),
+  truncated: z.boolean(),
+  matchCount: z.number().int().nonnegative(),
+  matchIndexes: z.array(z.number().int().nonnegative()),
   entries: z.array(containerLogEntrySchema),
 });
 
@@ -506,12 +519,25 @@ export const containerLogsQuerySchema = z.object({
   tail: z.coerce.number().int().min(1).max(MAX_CONTAINER_LOG_TAIL).default(DEFAULT_CONTAINER_LOG_TAIL),
 });
 
+const booleanQueryParamSchema = z
+  .union([z.boolean(), z.enum(["true", "false"])])
+  .transform((value) => (typeof value === "boolean" ? value : value === "true"));
+
+export const containerLogSearchQuerySchema = z.object({
+  query: z.string().trim().min(1),
+  mode: containerLogSearchModeSchema.default("plain"),
+  caseSensitive: booleanQueryParamSchema.default(false),
+  scanTail: z.coerce.number().int().min(1).max(MAX_CONTAINER_LOG_SEARCH_TAIL).default(DEFAULT_CONTAINER_LOG_SEARCH_TAIL),
+});
+
 export type ContainerSummary = z.infer<typeof containerSummarySchema>;
 export type ContainerOverview = z.infer<typeof containerOverviewSchema>;
 export type ContainerDetail = z.infer<typeof containerDetailSchema>;
 export type TerminalCommand = z.infer<typeof terminalCommandSchema>;
 export type ContainerLogEntry = z.infer<typeof containerLogEntrySchema>;
 export type ContainerLogsResponse = z.infer<typeof containerLogsResponseSchema>;
+export type ContainerLogSearchMode = z.infer<typeof containerLogSearchModeSchema>;
+export type ContainerLogSearchResponse = z.infer<typeof containerLogSearchResponseSchema>;
 export type TerminalShell = z.infer<typeof terminalShellSchema>;
 export type TerminalClientMessage = z.infer<typeof terminalClientMessageSchema>;
 export type TerminalServerMessage = z.infer<typeof terminalServerMessageSchema>;

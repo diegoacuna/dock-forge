@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { DockerRuntimeClient, parseDockerLogChunk, resolveContainerByKey } from "./index.js";
+import { DockerRuntimeClient, findContainerLogMatchIndexes, parseDockerLogChunk, resolveContainerByKey } from "./index.js";
 
 const encodeFrame = (streamType: 1 | 2, message: string) => {
   const payload = Buffer.from(message, "utf8");
@@ -113,6 +113,72 @@ describe("DockerRuntimeClient log helpers", () => {
 
     expect(result.entries).toEqual([]);
     expect(result.truncated).toBe(false);
+  });
+
+  it("finds plain-text matches without case sensitivity by default", () => {
+    const entries = [
+      { timestamp: null, stream: "stdout" as const, message: "Server started" },
+      { timestamp: null, stream: "stdout" as const, message: "worker ready" },
+      { timestamp: null, stream: "stdout" as const, message: "SERVER healthy" },
+    ];
+
+    expect(findContainerLogMatchIndexes(entries, { query: "server" })).toEqual([0, 2]);
+  });
+
+  it("respects case-sensitive log search", () => {
+    const entries = [
+      { timestamp: null, stream: "stdout" as const, message: "Server started" },
+      { timestamp: null, stream: "stdout" as const, message: "SERVER healthy" },
+    ];
+
+    expect(findContainerLogMatchIndexes(entries, { query: "Server", caseSensitive: true })).toEqual([0]);
+  });
+
+  it("supports regex log search", () => {
+    const entries = [
+      { timestamp: null, stream: "stdout" as const, message: "GET /health 200" },
+      { timestamp: null, stream: "stdout" as const, message: "GET /health 500" },
+      { timestamp: null, stream: "stdout" as const, message: "POST /jobs 201" },
+    ];
+
+    expect(findContainerLogMatchIndexes(entries, { query: "GET \\/health [45]00", mode: "regex" })).toEqual([1]);
+  });
+
+  it("surfaces invalid regex search errors", () => {
+    expect(() => findContainerLogMatchIndexes([], { query: "[", mode: "regex" })).toThrow("Invalid log search regex");
+  });
+
+  it("searches deeper log history and marks the response truncated when the scan fills the cap", async () => {
+    const logs = Buffer.concat([
+      encodeFrame(1, "2026-03-07T12:00:00.000000000Z api ready\n"),
+      encodeFrame(1, "2026-03-07T12:00:01.000000000Z worker ready\n"),
+      encodeFrame(2, "2026-03-07T12:00:02.000000000Z error happened\n"),
+    ]);
+    const inspect = vi.fn().mockResolvedValue({ Id: "container-1" });
+    const logsMethod = vi.fn().mockResolvedValue(logs);
+    const client = new DockerRuntimeClient();
+
+    Object.assign(client as object, {
+      docker: {
+        getContainer: vi.fn().mockReturnValue({ inspect, logs: logsMethod }),
+      },
+    });
+
+    const result = await client.searchContainerLogs("postgres", {
+      query: "ready",
+      scanTail: 20_000,
+    });
+
+    expect(logsMethod).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tail: 10000,
+        timestamps: true,
+      }),
+    );
+    expect(result.scanTail).toBe(10000);
+    expect(result.truncated).toBe(false);
+    expect(result.matchCount).toBe(2);
+    expect(result.matchIndexes).toEqual([0, 1]);
   });
 
   it("surfaces lookup failures when starting a live log stream", async () => {

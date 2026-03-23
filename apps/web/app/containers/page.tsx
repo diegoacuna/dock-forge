@@ -387,7 +387,7 @@ export default function ContainersPage() {
                     return null;
                   }
 
-                  return <ContainerLogsPanel containerIdOrName={container.name} containerName={container.name} />;
+                  return <ContainerLogsPanel containerIdOrName={container.name} containerName={container.name} searchMode="compact" />;
                 }}
               />
             )}

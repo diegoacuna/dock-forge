@@ -271,6 +271,10 @@ type RuntimeDockerClient = {
     idOrName: string,
     options?: { tailLines?: number },
   ) => Promise<Awaited<ReturnType<DockerRuntimeClient["getContainerLogs"]>>>;
+  searchContainerLogs: (
+    idOrName: string,
+    options: Parameters<DockerRuntimeClient["searchContainerLogs"]>[1],
+  ) => Promise<Awaited<ReturnType<DockerRuntimeClient["searchContainerLogs"]>>>;
   streamContainerLogs: (
     idOrName: string,
     callbacks: Parameters<DockerRuntimeClient["streamContainerLogs"]>[1],
@@ -354,6 +358,8 @@ export const dockerClient: RuntimeDockerClient = {
   getContainerDetail: (idOrName: string) => withDockerClient((client) => client.getContainerDetail(idOrName)),
   getContainerLogs: (idOrName: string, options?: { tailLines?: number }) =>
     withDockerClient((client) => client.getContainerLogs(idOrName, options)),
+  searchContainerLogs: (idOrName: string, options: Parameters<DockerRuntimeClient["searchContainerLogs"]>[1]) =>
+    withDockerClient((client) => client.searchContainerLogs(idOrName, options)),
   streamContainerLogs: (idOrName: string, callbacks: Parameters<DockerRuntimeClient["streamContainerLogs"]>[1]) =>
     withDockerClient((client) => client.streamContainerLogs(idOrName, callbacks)),
   openContainerTerminal: (
