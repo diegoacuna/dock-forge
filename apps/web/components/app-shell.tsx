@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Boxes, Container, Activity, Network, Database, Settings, LayoutDashboard, Package } from "lucide-react";
+import { GlobalContainerSearch } from "./global-container-search";
 import { cn } from "../lib/utils";
 
 const navigation = [
@@ -59,7 +60,10 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
           </nav>
         </aside>
 
-        <main className="space-y-6">{children}</main>
+        <main className="space-y-6">
+          <GlobalContainerSearch />
+          {children}
+        </main>
       </div>
     </div>
   );
