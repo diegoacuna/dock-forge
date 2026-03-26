@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useReducer, useRef, useState } from "react";
+import React, { useEffect, useReducer, useRef, useState } from "react";
 import {
   terminalServerMessageSchema,
   type TerminalDebugSnapshot,
@@ -19,6 +19,7 @@ import {
   type TerminalDiagnosticEntry,
   toTerminalConnectionAction,
 } from "../lib/container-terminal";
+import { buildTerminalWindowPath } from "../lib/container-terminal-route";
 import { Button, CopyButton, Panel, Select } from "./ui";
 
 type XTermInstance = import("xterm").Terminal;
@@ -55,21 +56,29 @@ export const ContainerTerminalPanel = ({
   containerName,
   containerState,
   terminalCommands,
+  mode = "embedded",
+  initialShell = "sh",
+  autoConnectOnReady = false,
 }: {
   containerIdOrName: string;
   containerName: string;
   containerState: ContainerState;
   terminalCommands: TerminalCommand[];
+  mode?: "embedded" | "window";
+  initialShell?: TerminalShell;
+  autoConnectOnReady?: boolean;
 }) => {
-  const [shell, setShell] = useState<TerminalShell>("sh");
+  const [shell, setShell] = useState<TerminalShell>(initialShell);
   const [state, dispatch] = useReducer(reduceTerminalConnectionState, initialTerminalConnectionState);
   const [diagnostics, setDiagnostics] = useState<TerminalDiagnosticEntry[]>([]);
+  const [terminalReady, setTerminalReady] = useState(false);
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTermInstance | null>(null);
   const fitAddonRef = useRef<FitAddonInstance | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const expectedCloseRef = useRef(false);
+  const autoConnectTriggeredRef = useRef(false);
   const stateRef = useRef(state);
 
   stateRef.current = state;
@@ -77,6 +86,7 @@ export const ContainerTerminalPanel = ({
   const isConnectable = isTerminalConnectable(containerState);
   const availabilityMessage = getTerminalAvailabilityMessage(containerState);
   const socketUrl = buildSocketUrl(`/containers/${encodeURIComponent(containerIdOrName)}/terminal/ws`);
+  const isEmbeddedMode = mode === "embedded";
 
   const logDiagnostic = (source: TerminalDiagnosticEntry["source"], event: string, detail: unknown) => {
     setDiagnostics((current) =>
@@ -150,12 +160,14 @@ export const ContainerTerminalPanel = ({
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
       resizeObserverRef.current = observer;
+      setTerminalReady(true);
     };
 
     void setupTerminal();
 
     return () => {
       cancelled = true;
+      setTerminalReady(false);
       cleanupDataListener?.dispose();
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
@@ -165,6 +177,19 @@ export const ContainerTerminalPanel = ({
       fitAddonRef.current = null;
     };
   }, [containerName]);
+
+  useEffect(() => {
+    setShell(initialShell);
+  }, [initialShell]);
+
+  useEffect(() => {
+    if (!autoConnectOnReady || !terminalReady || !isConnectable || autoConnectTriggeredRef.current) {
+      return;
+    }
+
+    autoConnectTriggeredRef.current = true;
+    void openTerminalSocket();
+  }, [autoConnectOnReady, isConnectable, terminalReady]);
 
   const openTerminalSocket = ({ diagnosticsMode = false }: { diagnosticsMode?: boolean } = {}) => {
     if (!isConnectable || !terminalRef.current) {
@@ -309,6 +334,17 @@ export const ContainerTerminalPanel = ({
     terminalRef.current?.clear();
   };
 
+  const openInNewWindow = () => {
+    window.open(
+      buildTerminalWindowPath({
+        containerIdOrName,
+        shell,
+      }),
+      "_blank",
+      "popup=yes,width=1280,height=900",
+    );
+  };
+
   const isActiveConnection = state.status === "connecting" || state.status === "connected";
 
   return (
@@ -329,12 +365,19 @@ export const ContainerTerminalPanel = ({
             <Button disabled={!isConnectable || isActiveConnection} onClick={connectTerminal}>
               {state.status === "connecting" ? "Connecting..." : "Connect"}
             </Button>
-            <Button variant="secondary" disabled={!isConnectable || isActiveConnection} onClick={() => void runDiagnostics()}>
-              Run diagnostics
-            </Button>
+            {isEmbeddedMode ? (
+              <Button variant="secondary" disabled={!isConnectable || isActiveConnection} onClick={() => void runDiagnostics()}>
+                Run diagnostics
+              </Button>
+            ) : null}
             <Button variant="ghost" disabled={!isActiveConnection} onClick={disconnectTerminal}>
               Disconnect
             </Button>
+            {isEmbeddedMode ? (
+              <Button variant="ghost" onClick={openInNewWindow}>
+                Open in new window
+              </Button>
+            ) : null}
             <Button variant="ghost" onClick={clearTerminal}>
               Clear
             </Button>
@@ -354,51 +397,55 @@ export const ContainerTerminalPanel = ({
         </div>
       </Panel>
 
-      <Panel className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-slate-950">Verbose diagnostics</p>
-            <p className="text-xs text-slate-500">Temporary handshake trace for websocket and preflight debugging.</p>
-          </div>
-          <Button variant="ghost" onClick={() => setDiagnostics([])}>
-            Clear diagnostics
-          </Button>
-        </div>
-        <div className="max-h-80 overflow-y-auto rounded-2xl bg-slate-950 p-4 font-mono text-xs text-slate-100">
-          {diagnostics.length === 0 ? (
-            <p className="text-slate-400">No diagnostics captured yet. Use Run diagnostics to trace the websocket handshake.</p>
-          ) : (
-            <div className="space-y-3">
-              {diagnostics.map((entry, index) => (
-                <div key={`${entry.timestamp}-${entry.event}-${index}`} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
-                    {entry.timestamp} · {entry.source} · {entry.event}
-                  </p>
-                  <pre className="mt-2 whitespace-pre-wrap break-words text-slate-100">{entry.detail}</pre>
-                </div>
-              ))}
+      {isEmbeddedMode ? (
+        <Panel className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-950">Verbose diagnostics</p>
+              <p className="text-xs text-slate-500">Temporary handshake trace for websocket and preflight debugging.</p>
             </div>
-          )}
-        </div>
-      </Panel>
-
-      <Panel className="space-y-3">
-        <div>
-          <p className="text-sm font-semibold text-slate-950">Fallback helper commands</p>
-          <p className="text-xs text-slate-500">Keep these available for debugging outside the browser terminal.</p>
-        </div>
-        {terminalCommands.map((command) => (
-          <div key={command.command} className="rounded-2xl border border-slate-200 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="font-medium text-slate-950">{command.label}</p>
-                <code className="text-sm text-slate-600">{command.command}</code>
+            <Button variant="ghost" onClick={() => setDiagnostics([])}>
+              Clear diagnostics
+            </Button>
+          </div>
+          <div className="max-h-80 overflow-y-auto rounded-2xl bg-slate-950 p-4 font-mono text-xs text-slate-100">
+            {diagnostics.length === 0 ? (
+              <p className="text-slate-400">No diagnostics captured yet. Use Run diagnostics to trace the websocket handshake.</p>
+            ) : (
+              <div className="space-y-3">
+                {diagnostics.map((entry, index) => (
+                  <div key={`${entry.timestamp}-${entry.event}-${index}`} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                      {entry.timestamp} · {entry.source} · {entry.event}
+                    </p>
+                    <pre className="mt-2 whitespace-pre-wrap break-words text-slate-100">{entry.detail}</pre>
+                  </div>
+                ))}
               </div>
-              <CopyButton text={command.command} />
-            </div>
+            )}
           </div>
-        ))}
-      </Panel>
+        </Panel>
+      ) : null}
+
+      {isEmbeddedMode ? (
+        <Panel className="space-y-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-950">Fallback helper commands</p>
+            <p className="text-xs text-slate-500">Keep these available for debugging outside the browser terminal.</p>
+          </div>
+          {terminalCommands.map((command) => (
+            <div key={command.command} className="rounded-2xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="font-medium text-slate-950">{command.label}</p>
+                  <code className="text-sm text-slate-600">{command.command}</code>
+                </div>
+                <CopyButton text={command.command} />
+              </div>
+            </div>
+          ))}
+        </Panel>
+      ) : null}
     </div>
   );
 };

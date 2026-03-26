@@ -19,8 +19,9 @@ const navigation = [
 export const AppShell = ({ children }: { children: React.ReactNode }) => {
   const pathname = usePathname();
   const isInstallPage = pathname === "/install";
+  const isFocusedTerminalPage = pathname.startsWith("/terminal/");
 
-  if (isInstallPage) {
+  if (isInstallPage || isFocusedTerminalPage) {
     return <main className="min-h-screen bg-slate-100">{children}</main>;
   }
 
