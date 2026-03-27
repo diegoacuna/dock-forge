@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ContainerSummary } from "@dockforge/shared";
-import { searchContainersForCommandPalette } from "./container-command-search";
+import type { ContainerSummary, Group } from "@dockforge/shared";
+import { searchCommandPalette } from "./container-command-search";
 
 const createContainer = (overrides: Partial<ContainerSummary> = {}): ContainerSummary => ({
   id: overrides.id ?? "container-1",
@@ -24,64 +24,124 @@ const createContainer = (overrides: Partial<ContainerSummary> = {}): ContainerSu
   groupNames: overrides.groupNames ?? [],
 });
 
-describe("container command search", () => {
+const createGroup = (overrides: Partial<Group> = {}): Group => ({
+  id: overrides.id ?? "group-1",
+  name: overrides.name ?? "Misc",
+  slug: overrides.slug ?? "misc",
+  description: overrides.description ?? "General purpose stack",
+  color: overrides.color ?? null,
+  memberCount: overrides.memberCount ?? 2,
+  dependencyCount: overrides.dependencyCount ?? 1,
+  groupStatus: overrides.groupStatus ?? "running",
+  lastRunStatus: overrides.lastRunStatus ?? null,
+  createdAt: overrides.createdAt ?? "2026-03-25T18:00:00.000Z",
+  updatedAt: overrides.updatedAt ?? "2026-03-25T18:00:00.000Z",
+});
+
+describe("command palette search", () => {
   it("returns alphabetized containers when the query is empty", () => {
-    const results = searchContainersForCommandPalette(
+    const results = searchCommandPalette(
       [createContainer({ name: "web-1", containerKey: "web" }), createContainer({ name: "api-1", containerKey: "api" })],
+      [createGroup({ name: "Misc", slug: "misc" })],
       "",
     );
 
     expect(results.map((result) => result.name)).toEqual(["api-1", "web-1"]);
+    expect(results.every((result) => result.kind === "container")).toBe(true);
   });
 
-  it("prefers exact and prefix name matches over weaker matches", () => {
-    const results = searchContainersForCommandPalette(
-      [
-        createContainer({ id: "1", name: "api", containerKey: "service-api" }),
-        createContainer({ id: "2", name: "api-worker", containerKey: "worker" }),
-        createContainer({ id: "3", name: "payments", containerKey: "api-proxy" }),
-      ],
-      "api",
-    );
+  it("returns the main group result for an exact group-name query", () => {
+    const results = searchCommandPalette([], [createGroup({ id: "group-misc", name: "Misc", slug: "misc" })], "misc");
 
-    expect(results.map((result) => result.name)).toEqual(["api", "api-worker", "payments"]);
-  });
-
-  it("matches on image, project, and group metadata too", () => {
-    expect(
-      searchContainersForCommandPalette(
-        [
-          createContainer({
-            name: "postgres",
-            image: "postgres:16",
-            compose: {
-              project: "billing",
-              service: "db",
-              workingDir: "/workspace/billing",
-              configFiles: [],
-              rawLabels: {},
-            },
-            groupNames: ["Billing Stack"],
-          }),
-        ],
-        "billing",
-      )[0],
-    ).toMatchObject({
-      name: "postgres",
-      projectLabel: "billing",
-      groupLabel: "Billing Stack",
+    expect(results[0]).toMatchObject({
+      id: "group:group-misc",
+      kind: "group",
+      name: "Misc",
+      href: "/groups/group-misc",
     });
   });
 
-  it("limits the number of results", () => {
-    const containers = Array.from({ length: 12 }, (_, index) =>
+  it("matches groups by slug too", () => {
+    const results = searchCommandPalette([], [createGroup({ id: "group-ops", name: "Operations", slug: "ops" })], "ops");
+
+    expect(results[0]).toMatchObject({
+      id: "group:group-ops",
+      kind: "group",
+      href: "/groups/group-ops",
+    });
+  });
+
+  it("returns a graph shortcut above the main group when the query includes a section alias", () => {
+    const results = searchCommandPalette([], [createGroup({ id: "group-misc", name: "Misc", slug: "misc" })], "misc graph");
+
+    expect(results[0]).toMatchObject({
+      id: "group-section:group-misc:Graph",
+      kind: "group-section",
+      href: "/groups/group-misc?tab=Graph",
+      sectionLabel: "Graph",
+    });
+    expect(results[1]).toMatchObject({
+      id: "group:group-misc",
+      kind: "group",
+    });
+  });
+
+  it("supports multiple section aliases for the same group", () => {
+    const runsResults = searchCommandPalette([], [createGroup({ id: "group-misc", name: "Misc", slug: "misc" })], "misc runs");
+    const executionResults = searchCommandPalette([], [createGroup({ id: "group-misc", name: "Misc", slug: "misc" })], "misc execution");
+
+    expect(runsResults[0]).toMatchObject({
+      kind: "group-section",
+      sectionLabel: "Run History",
+      href: "/groups/group-misc?tab=Run%20History",
+    });
+    expect(executionResults[0]).toMatchObject({
+      kind: "group-section",
+      sectionLabel: "Execution Order",
+      href: "/groups/group-misc?tab=Execution%20Order",
+    });
+  });
+
+  it("does not emit section shortcuts for a plain group-name query", () => {
+    const results = searchCommandPalette([], [createGroup({ id: "group-misc", name: "Misc", slug: "misc" })], "misc");
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.kind).toBe("group");
+  });
+
+  it("keeps sensible ranking when a container and a group both match", () => {
+    const results = searchCommandPalette(
+      [createContainer({ id: "container-misc", name: "misc-api", containerKey: "misc-api" })],
+      [createGroup({ id: "group-misc", name: "Misc", slug: "misc" })],
+      "misc",
+    );
+
+    expect(results[0]).toMatchObject({
+      kind: "group",
+      id: "group:group-misc",
+    });
+    expect(results[1]).toMatchObject({
+      kind: "container",
+      id: "container-misc",
+    });
+  });
+
+  it("limits the merged results list", () => {
+    const containers = Array.from({ length: 6 }, (_, index) =>
       createContainer({
         id: `container-${index}`,
         name: `service-${index}`,
         containerKey: `service-${index}`,
       }),
     );
+    const groups = Array.from({ length: 6 }, (_, index) =>
+      createGroup({
+        id: `group-${index}`,
+        name: `Service Group ${index}`,
+        slug: `service-group-${index}`,
+      }),
+    );
 
-    expect(searchContainersForCommandPalette(containers, "service", 5)).toHaveLength(5);
+    expect(searchCommandPalette(containers, groups, "service", 5)).toHaveLength(5);
   });
 });
